@@ -68,12 +68,12 @@ function createWindow() {
   const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize;
 
   win = new BrowserWindow({
-    width: 380,
-    height: 600,
-    minWidth: 320,
-    minHeight: 460,
-    x: screenW - 400,
-    y: screenH - 640,
+    width: 300,
+    height: 480,
+    minWidth: 260,
+    minHeight: 380,
+    x: screenW - 320,
+    y: screenH - 520,
     frame: false,
     resizable: true,
     backgroundColor: "#0e0e14",

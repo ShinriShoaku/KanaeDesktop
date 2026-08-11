@@ -1,191 +1,558 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="UTF-8" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>YTPlayer</title>
 <style>
-  :root {
-    --accent: #f97316;
-    --accent2: #a855f7;
-    --bg: #0e0e14;
-    --panel: #17171f;
-    --panel2: #1e1e28;
-    --border: #2a2a36;
-    --text: #eceef2;
-    --text-dim: #8b8d9a;
-    --danger: #ef4444;
-    --ok: #22c55e;
-  }
-  * { box-sizing: border-box; }
-  html, body {
-    margin: 0; padding: 0; height: 100%; overflow: hidden;
-    background: var(--bg); color: var(--text);
-    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
-    font-size: 13px; user-select: none;
-  }
-  #app { display: flex; flex-direction: column; height: 100vh; }
+:root{
+  --bg:#e8e6e0;
+  --paper:#fffefa;
+  --paper2:#f6f4ee;
+  --ink:#171717;
+  --muted:#8a8882;
+  --soft:#c8c5bd;
+  --line:#dedbd3;
+  --accent:#171717;
+  --green:#43a86f;
+  --red:#d95757;
+  --shadow:0 12px 30px rgba(45,42,35,.08);
+}
+*{box-sizing:border-box}
+html,body{
+  width:100%;height:100%;margin:0;overflow:hidden;
+  font-family:Inter,"Segoe UI",Arial,sans-serif;
+  background:var(--bg);color:var(--ink);
+  font-size:11px;user-select:none;
+}
+button,input{font:inherit}
+button{color:inherit}
 
-  /* ── Titlebar ─────────────────────────── */
-  #titlebar {
-    -webkit-app-region: drag;
-    display: flex; align-items: center; justify-content: space-between;
-    height: 34px; padding: 0 8px 0 12px;
-    background: var(--panel); border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  #titlebar .brand { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--text-dim); font-size: 12px; }
-  #titlebar .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); transition: background .2s; }
-  #titlebar .dot.connected { background: var(--ok); }
-  #titlebar .win-btns { -webkit-app-region: no-drag; display: flex; gap: 2px; }
-  #titlebar button {
-    -webkit-app-region: no-drag;
-    width: 26px; height: 26px; border: none; background: transparent; color: var(--text-dim);
-    cursor: pointer; border-radius: 5px; font-size: 13px; display:flex; align-items:center; justify-content:center;
-  }
-  #titlebar button:hover { background: var(--panel2); color: var(--text); }
-  #titlebar button.close:hover { background: var(--danger); color: #fff; }
-  #titlebar button.pin.active { color: var(--accent); }
+/* ───────── Window ───────── */
+#app{
+  width:100%;height:100%;
+  display:flex;flex-direction:column;
+  background:
+    radial-gradient(circle at 15% 10%,rgba(255,255,255,.65),transparent 30%),
+    radial-gradient(circle at 90% 90%,rgba(210,207,198,.4),transparent 35%),
+    var(--bg);
+}
+#titlebar{
+  height:34px;min-height:34px;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 9px 0 13px;
+  -webkit-app-region:drag;
+}
+.brand{
+  display:flex;align-items:center;gap:7px;
+  font-size:9px;font-weight:850;letter-spacing:.13em;
+  text-transform:uppercase;color:#363532;
+}
+.brand-mark{
+  width:13px;height:13px;border-radius:4px;
+  background:#171717;display:grid;place-items:center;
+}
+.brand-mark:after{
+  content:"";width:4px;height:4px;border-radius:50%;
+  background:#fff;
+}
+.status-dot{
+  width:5px;height:5px;border-radius:50%;background:#d95757;
+}
+.status-dot.connected{
+  background:var(--green);
+  box-shadow:0 0 0 3px rgba(67,168,111,.12);
+}
+.win-btns{display:flex;gap:2px;-webkit-app-region:no-drag}
+.win-btns button{
+  width:25px;height:23px;border:0;background:transparent;
+  border-radius:6px;color:#77736b;cursor:pointer;
+}
+.win-btns button:hover{background:rgba(0,0,0,.06);color:#111}
+.win-btns .active{background:#171717;color:#fff}
+.win-btns .close:hover{background:#d95757;color:#fff}
 
-  /* ── Toolbar (opens separate windows) ─── */
-  #toolbar { display: flex; gap: 6px; padding: 8px 16px 0; flex-shrink: 0; }
-  #toolbar button {
-    flex: 1; position: relative; display: flex; align-items: center; justify-content: center; gap: 5px;
-    background: var(--panel2); border: 1px solid var(--border); color: var(--text-dim);
-    padding: 7px 4px; border-radius: 7px; cursor: pointer; font-size: 11px; font-weight: 600;
-  }
-  #toolbar button:hover { color: var(--text); border-color: var(--accent); }
-  #toolbar button .ic { font-size: 13px; }
-  #toolbar button .badge {
-    position: absolute; top: -4px; right: -4px; min-width: 15px; height: 15px; border-radius: 8px;
-    background: var(--accent); color: #fff; font-size: 9px; font-weight: 700;
-    display: none; align-items: center; justify-content: center; padding: 0 3px;
-  }
-  #toolbar button .badge.show { display: flex; }
-  #toolbar button .tt-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); flex-shrink: 0; }
-  #toolbar button .tt-dot.connected { background: var(--ok); }
+/* ───────── top navigation ───────── */
+#toolbar{
+  height:39px;min-height:39px;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 11px 7px;
+}
+.tool-group{display:flex;gap:5px}
+.tool{
+  height:25px;border:1px solid var(--line);border-radius:13px;
+  padding:0 10px;background:rgba(255,255,255,.62);
+  color:#6f6c65;cursor:pointer;font-size:9px;
+  display:flex;align-items:center;gap:5px;
+  box-shadow:0 2px 5px rgba(0,0,0,.025);
+}
+.tool:hover{background:#fff;color:#111}
+.tool .icon{font-size:12px}
+.tool-live .status-dot{width:5px;height:5px}
+.badge{
+  display:none;min-width:14px;height:14px;padding:0 4px;
+  border-radius:8px;background:#171717;color:#fff;
+  align-items:center;justify-content:center;font-size:7px;
+}
+.badge.show{display:flex}
+.toolbar-meta{
+  display:flex;align-items:center;gap:7px;color:#aaa69e;
+  font-size:8px;letter-spacing:.08em;text-transform:uppercase;
+}
+.toolbar-meta strong{color:#45433e;font-weight:800}
 
-  /* ── Now playing ──────────────────────── */
-  #nowplaying { padding: 12px 16px 8px; flex-shrink: 0; }
-  #thumb-wrap {
-    width: 100%; aspect-ratio: 1 / 1; max-height: 128px; border-radius: 10px; overflow: hidden;
-    background: linear-gradient(135deg, var(--panel2), var(--panel));
-    display: flex; align-items: center; justify-content: center;
-    border: 1px solid var(--border); margin-bottom: 10px;
-  }
-  #thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: none; }
-  #thumb-wrap .placeholder { color: var(--text-dim); font-size: 26px; }
+/* ───────── Main screenshot-like grid ───────── */
+#dashboard{
+  flex:1;min-height:0;
+  display:grid;
+  grid-template-columns:1.08fr 1.08fr .88fr;
+  grid-template-rows:minmax(0,1fr) 124px;
+  gap:14px;
+  padding:0 10px 10px;
+}
 
-  #song-title { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #song-channel { color: var(--text-dim); font-size: 11.5px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* shared white panels */
+.panel{
+  background:rgba(255,254,250,.97);
+  border:1px solid rgba(0,0,0,.045);
+  border-radius:11px;
+  box-shadow:var(--shadow);
+  overflow:hidden;
+}
 
-  #progress-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-  #progress-bar { flex: 1; height: 4px; border-radius: 3px; background: var(--panel2); position: relative; cursor: default; overflow: hidden; }
-  #progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 3px; }
-  #time-elapsed, #time-total { font-size: 10.5px; color: var(--text-dim); min-width: 32px; text-align: center; }
+/* ───────── Left: now playing ───────── */
+#player-panel{
+  grid-column:1;
+  grid-row:1;
+  padding:10px;
+  display:flex;flex-direction:column;
+}
+.player-image{
+  width:100%;height:49%;
+  min-height:100px;
+  border-radius:9px;
+  background:#e3e1dc;
+  overflow:hidden;
+  position:relative;
+}
+#player-art{
+  width:100%;height:100%;
+  background-size:cover;background-position:center;
+}
+#thumb-img{
+  width:100%;height:100%;object-fit:cover;
+  display:none;
+}
+#thumb-placeholder{
+  position:absolute;inset:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:28px;color:#aaa69f;
+  background:
+    linear-gradient(135deg,#d9d7d1,#eeece7);
+}
+#eq{
+  position:absolute;left:8px;bottom:8px;
+  display:flex;align-items:flex-end;gap:2px;height:13px;
+  opacity:0;z-index:4;
+}
+#app.playing #eq{opacity:1}
+#eq i{
+  width:3px;border-radius:2px;background:#fff;
+  animation:eq .9s ease-in-out infinite;
+}
+#eq i:nth-child(1){height:50%;animation-delay:-.4s}
+#eq i:nth-child(2){height:100%;animation-delay:-.1s}
+#eq i:nth-child(3){height:65%;animation-delay:-.5s}
+#eq i:nth-child(4){height:80%;animation-delay:-.25s}
+@keyframes eq{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
 
-  /* ── Controls ─────────────────────────── */
-  #controls { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 12px; }
-  #controls button {
-    border: none; background: var(--panel2); color: var(--text);
-    border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center;
-    transition: background .15s, transform .1s;
-  }
-  #controls button:hover { background: var(--border); }
-  #controls button:active { transform: scale(0.92); }
-  #btn-play { width: 46px; height: 46px; background: var(--accent); font-size: 17px; }
-  #btn-play:hover { background: #ea6c0c; }
-  #btn-skip, #btn-stop { width: 34px; height: 34px; font-size: 13px; }
-  #btn-shuffle { width: 30px; height: 30px; font-size: 12px; color: var(--text-dim); }
-  #btn-shuffle.active { color: var(--accent); background: rgba(249,115,22,0.15); }
+#track-state-label{
+  margin-top:13px;text-align:center;
+  color:#aaa69f;font-size:7px;font-weight:800;
+  letter-spacing:.12em;text-transform:uppercase;
+}
+#song-title{
+  margin-top:5px;text-align:center;
+  font-size:12px;font-weight:800;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+#song-channel{
+  margin-top:3px;text-align:center;color:#aaa69f;
+  font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+#progress-row{
+  margin:12px 24px 0;
+  display:grid;grid-template-columns:25px 1fr 25px;
+  align-items:center;gap:7px;
+}
+#time-elapsed,#time-total{
+  font:7px Consolas,monospace;color:#aaa69f;
+}
+#time-total{text-align:right}
+#progress-bar{
+  height:3px;background:#e9e7e1;border-radius:4px;overflow:hidden;
+}
+#progress-fill{
+  height:100%;width:0;
+  background:#171717;border-radius:4px;
+}
+#controls{
+  display:flex;align-items:center;justify-content:center;
+  gap:7px;margin-top:9px;
+}
+#controls button{
+  width:25px;height:25px;border:0;background:transparent;
+  border-radius:50%;color:#c1beb7;cursor:pointer;
+  display:grid;place-items:center;font-size:10px;
+}
+#controls button:hover{color:#171717;background:#f0eee8}
+#controls #btn-play{
+  width:31px;height:31px;
+  background:#171717;color:#fff;
+  font-size:10px;box-shadow:0 4px 10px rgba(0,0,0,.13);
+}
+#controls #btn-play:hover{background:#333}
+#controls #btn-shuffle.active{color:#171717}
+#volume-row{
+  margin:5px 16px 0;
+  display:flex;align-items:center;gap:7px;
+}
+#volume-row span{color:#aaa69f;font-size:8px}
+input[type=range]{
+  flex:1;height:3px;appearance:none;-webkit-appearance:none;
+  background:#e8e5df;border-radius:4px;outline:none;
+}
+input[type=range]::-webkit-slider-thumb{
+  appearance:none;-webkit-appearance:none;
+  width:8px;height:8px;border-radius:50%;
+  background:#171717;cursor:pointer;
+}
 
-  #volume-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 0 2px; }
-  #volume-row span { font-size: 12px; color: var(--text-dim); width: 14px; text-align:center; }
-  input[type=range] {
-    flex: 1; -webkit-appearance: none; height: 3px; border-radius: 3px; background: var(--panel2); outline: none;
-  }
-  input[type=range]::-webkit-slider-thumb {
-    -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%; background: var(--accent); cursor: pointer;
-  }
+/* ───────── Middle: queue / current collection ───────── */
+#queue-panel{
+  grid-column:2;grid-row:1;
+  display:flex;flex-direction:column;
+  padding:10px 11px;
+}
+.queue-hero{
+  height:49%;min-height:100px;
+  border-radius:9px;
+  background:#f1efe9;
+  padding:12px;
+  position:relative;
+}
+.queue-kicker{
+  font-size:7px;text-transform:uppercase;letter-spacing:.12em;
+  color:#aaa69f;font-weight:800;
+}
+.queue-heading{
+  margin-top:5px;font-size:13px;font-weight:800;
+}
+.queue-sub{
+  margin-top:4px;color:#aaa69f;font-size:8px;
+}
+.queue-pill{
+  position:absolute;right:10px;top:10px;
+  width:25px;height:25px;border-radius:50%;
+  background:#171717;color:#fff;display:grid;place-items:center;
+  font-size:10px;
+}
+.queue-count{
+  position:absolute;left:12px;bottom:10px;
+  font-size:8px;color:#74716b;
+}
+#btn-clear-queue{
+  position:absolute;right:10px;bottom:8px;
+  border:0;background:transparent;color:#99958d;
+  font-size:7px;cursor:pointer;
+}
+#btn-clear-queue:hover{color:#d95757}
+#queue-list{
+  flex:1;min-height:0;
+  display:flex;flex-direction:column;
+  overflow:hidden;padding-top:8px;
+}
+.qitem{
+  min-height:31px;
+  display:grid;
+  grid-template-columns:26px 1fr 20px;
+  gap:7px;align-items:center;
+  padding:4px 3px;
+  border-bottom:1px solid #efede8;
+}
+.qitem:last-child{border-bottom:0}
+.qitem:hover{background:#faf9f5;border-radius:7px}
+.qitem .idx{
+  color:#aaa69f;font:7px Consolas,monospace;text-align:center;
+}
+.qthumb{
+  display:none;
+}
+.qitem .meta{min-width:0}
+.qitem .t{
+  font-size:8.5px;font-weight:750;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.qitem .c{
+  margin-top:2px;font-size:7px;color:#aaa69f;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.qitem button{
+  width:19px;height:19px;border:0;background:transparent;
+  color:#c3c0b9;border-radius:50%;cursor:pointer;
+  opacity:0;font-size:8px;
+}
+.qitem:hover button{opacity:1}
+.qitem button:hover{background:#f6dfdf;color:#d95757}
+#queue-empty{
+  margin:auto;color:#b4b0a8;font-size:8px;text-align:center;
+}
 
-  /* ── Queue (only panel left inline) ────── */
-  #queue-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px 4px; flex-shrink: 0; }
-  #queue-head .lbl { font-size: 11.5px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: .4px; }
-  #queue-head button {
-    background: none; border: none; color: var(--text-dim); font-size: 11px; cursor: pointer; padding: 4px 6px;
-  }
-  #queue-head button:hover { color: var(--danger); }
+/* ───────── Right: live / status ───────── */
+#live-panel{
+  grid-column:3;grid-row:1;
+  display:flex;flex-direction:column;gap:10px;
+}
+.live-card{
+  flex:1;
+  background:#f7f5ef;
+  border-radius:11px;
+  padding:9px;
+  position:relative;
+  overflow:hidden;
+}
+.live-art{
+  width:100%;height:100%;
+  border-radius:8px;
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.88) 0 35%,#bfc1ba 35%,#555a59 48%,#292d2d 49%,#1e2222 100%);
+  position:relative;overflow:hidden;
+}
+.live-art:before{
+  content:"";
+  position:absolute;left:-10%;right:-10%;bottom:12%;
+  height:38%;background:
+    repeating-linear-gradient(168deg,transparent 0 15px,rgba(255,255,255,.035) 16px 17px);
+  transform:skewY(-8deg);
+}
+.live-now{
+  position:absolute;right:8px;top:8px;
+  padding:4px 8px;border-radius:10px;
+  background:#171717;color:#fff;font-size:7px;
+  display:flex;align-items:center;gap:5px;
+}
+.live-now .status-dot{width:4px;height:4px;background:#fff}
+.live-info{
+  position:absolute;left:9px;right:9px;bottom:8px;
+  color:#fff;
+}
+.live-label{
+  font-size:6px;text-transform:uppercase;letter-spacing:.12em;
+  opacity:.68;
+}
+.live-name{
+  margin-top:3px;font-size:10px;font-weight:800;
+}
+.live-place{
+  margin-top:2px;font-size:7px;opacity:.68;
+}
+.live-stats{
+  margin-top:6px;display:flex;gap:10px;font-size:7px;opacity:.85;
+}
+.status-card{
+  height:42%;
+  background:#fffefa;border-radius:11px;
+  display:grid;grid-template-columns:44px 1fr;
+  overflow:hidden;
+}
+.status-metrics{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:10px;border-right:1px solid #eeeae2;
+}
+.metric{text-align:center}
+.metric .n{font-size:10px;font-weight:800}
+.metric .l{margin-top:2px;font-size:6.5px;color:#aaa69f}
+.status-content{
+  padding:9px;display:flex;flex-direction:column;justify-content:space-between;
+}
+.status-title{font-size:8px;font-weight:800}
+.status-copy{font-size:7px;color:#aaa69f;line-height:1.4}
+.status-line{
+  display:flex;align-items:center;gap:5px;
+  font-size:7px;color:#77736c;
+}
+.status-line .status-dot{width:5px;height:5px}
 
-  #queue-list { flex: 1; overflow-y: auto; padding: 2px 16px 14px; }
-  #queue-list .qitem {
-    display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--border);
-  }
-  #queue-list .qitem .idx { color: var(--text-dim); font-size: 10.5px; width: 14px; flex-shrink: 0; }
-  #queue-list .qitem .meta { flex: 1; min-width: 0; }
-  #queue-list .qitem .t { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #queue-list .qitem .c { font-size: 10px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #queue-list .qitem button {
-    width: 20px; height: 20px; border: none; border-radius: 4px; background: transparent; color: var(--text-dim); cursor: pointer; font-size: 12px;
-  }
-  #queue-list .qitem button:hover { background: var(--danger); color: #fff; }
-  #queue-empty { color: var(--text-dim); font-size: 12px; text-align: center; padding: 20px 0; }
+/* ───────── Bottom strip ───────── */
+#artist-strip{
+  grid-column:1 / 3;
+  grid-row:2;
+  display:flex;align-items:center;
+  padding:10px 14px;
+}
+.strip-arrow{
+  width:26px;height:26px;border:0;background:transparent;
+  color:#77736b;font-size:16px;cursor:pointer;
+}
+.strip-arrow:hover{color:#111}
+#artist-list{
+  flex:1;height:100%;
+  display:flex;align-items:center;justify-content:space-evenly;
+  gap:8px;overflow:hidden;
+}
+.artist-item{
+  min-width:100px;max-width:135px;
+  display:flex;align-items:center;gap:8px;
+}
+.artist-avatar{
+  width:38px;height:38px;border-radius:50%;
+  background:#dedbd3;flex:none;
+  object-fit:cover;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.05);
+}
+.artist-meta{min-width:0}
+.artist-name{
+  font-size:8.5px;font-weight:800;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.artist-sub{
+  margin-top:3px;font-size:6.5px;color:#aaa69f;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+#artist-list .qitem{
+  display:flex;min-height:auto;border:0;padding:0;
+}
+#artist-list .qitem .idx,
+#artist-list .qitem .meta,
+#artist-list .qitem button{display:none}
+#artist-list .qitem .qthumb{display:block;width:38px;height:38px;border-radius:50%;object-fit:cover}
 
-  ::-webkit-scrollbar { width: 6px; }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+/* Existing queue renderer is mapped into the lower strip by CSS/JS helper. */
+#artist-list .qitem:after{
+  content:"";display:block;
+}
+#queue-list .qitem{ /* keep normal queue invisible; artist strip mirrors it */
+  display:none;
+}
+
+/* responsive compact */
+@media(max-width:650px){
+  #dashboard{
+    grid-template-columns:1fr 1fr;
+    grid-template-rows:1fr 100px;
+  }
+  #live-panel{grid-column:2;grid-row:1}
+  #artist-strip{grid-column:1 / 3}
+}
+@media(max-width:480px){
+  #dashboard{grid-template-columns:1fr;grid-template-rows:1fr}
+  #queue-panel,#live-panel,#artist-strip{display:none}
+  #player-panel{grid-column:1;grid-row:1}
+}
 </style>
 </head>
 <body>
 <div id="app">
   <div id="titlebar">
-    <div class="brand"><span class="dot" id="tt-dot-title"></span> YTPlayer</div>
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="status-dot" id="tt-dot-title"></span>
+      <span>YTPLAYER</span>
+    </div>
     <div class="win-btns">
-      <button class="pin" id="btn-pin" title="Selalu di atas">&#128204;</button>
-      <button id="btn-min" title="Minimize">&#8211;</button>
-      <button class="close" id="btn-close" title="Tutup">&#10005;</button>
+      <button id="btn-pin" title="Selalu di atas">◆</button>
+      <button id="btn-min" title="Minimize">−</button>
+      <button class="close" id="btn-close" title="Tutup">×</button>
     </div>
   </div>
 
   <div id="toolbar">
-    <button id="btn-open-settings" title="Buka Settings">
-      <span class="ic">&#9881;</span> Settings
-    </button>
-    <button id="btn-open-tiktok" title="Buka TikTok Live">
-      <span class="tt-dot" id="tt-dot-toolbar"></span> TikTok
-      <span class="badge" id="tt-badge">0</span>
-    </button>
-    <button id="btn-open-search" title="Cari musik">
-      <span class="ic">&#128269;</span> Cari
-    </button>
+    <div class="tool-group">
+      <button class="tool" id="btn-open-settings"><span class="icon">⚙</span> Settings</button>
+      <button class="tool tool-live" id="btn-open-tiktok">
+        <span class="status-dot" id="tt-dot-toolbar"></span> TikTok
+        <span class="badge" id="tt-badge">0</span>
+      </button>
+      <button class="tool" id="btn-open-search"><span class="icon">⌕</span> Search</button>
+    </div>
+    <div class="toolbar-meta"><span>Audio</span><strong>Ready</strong></div>
   </div>
 
-  <div id="nowplaying">
-    <div id="thumb-wrap">
-      <img id="thumb-img" alt="" />
-      <div class="placeholder" id="thumb-placeholder">&#127925;</div>
-    </div>
-    <div id="song-title">Tidak ada yang diputar</div>
-    <div id="song-channel">&nbsp;</div>
-    <div id="progress-row">
-      <span id="time-elapsed">0:00</span>
-      <div id="progress-bar"><div id="progress-fill"></div></div>
-      <span id="time-total">0:00</span>
-    </div>
-    <div id="controls">
-      <button id="btn-shuffle" title="Shuffle">&#128256;</button>
-      <button id="btn-play" title="Play/Pause">&#9658;</button>
-      <button id="btn-skip" title="Skip">&#9197;</button>
-      <button id="btn-stop" title="Stop">&#9632;</button>
-    </div>
-    <div id="volume-row">
-      <span>&#128264;</span>
-      <input type="range" id="volume-slider" min="0" max="150" value="100" />
-    </div>
-  </div>
+  <main id="dashboard">
 
-  <div id="queue-head">
-    <span class="lbl">Antrian</span>
-    <button id="btn-clear-queue">Kosongkan</button>
-  </div>
-  <div id="queue-list"><div id="queue-empty">Antrian kosong</div></div>
+    <section id="player-panel" class="panel">
+      <div class="player-image">
+        <div id="player-art"></div>
+        <img id="thumb-img" alt="">
+        <div id="thumb-placeholder">♫</div>
+        <div id="eq"><i></i><i></i><i></i><i></i></div>
+      </div>
+      <div id="track-state-label">Now playing</div>
+      <div id="song-title">Tidak ada yang diputar</div>
+      <div id="song-channel">&nbsp;</div>
+      <div id="progress-row">
+        <span id="time-elapsed">0:00</span>
+        <div id="progress-bar"><div id="progress-fill"></div></div>
+        <span id="time-total">0:00</span>
+      </div>
+      <div id="controls">
+        <button id="btn-shuffle" title="Shuffle">⤨</button>
+        <button id="btn-skip" title="Next">⏭</button>
+        <button id="btn-play" title="Play/Pause">▶</button>
+        <button id="btn-stop" title="Stop">■</button>
+      </div>
+      <div id="volume-row">
+        <span>🔊</span>
+        <input type="range" id="volume-slider" min="0" max="150" value="100">
+      </div>
+    </section>
+
+    <section id="queue-panel" class="panel">
+      <div class="queue-hero">
+        <div class="queue-kicker">Your playlist</div>
+        <div class="queue-heading">One track at a time</div>
+        <div class="queue-sub">Songs waiting in the playback queue</div>
+        <div class="queue-pill">♥</div>
+        <div class="queue-count" id="queue-count-label">Queue</div>
+        <button id="btn-clear-queue">CLEAR</button>
+      </div>
+      <div id="queue-list"><div id="queue-empty">Antrian kosong</div></div>
+    </section>
+
+    <aside id="live-panel">
+      <div class="live-card panel">
+        <div class="live-art">
+          <div class="live-now"><span class="status-dot"></span> Live now</div>
+          <div class="live-info">
+            <div class="live-label">TikTok Live</div>
+            <div class="live-name">Connection status</div>
+            <div class="live-place">TikTok listener bridge</div>
+            <div class="live-stats"><span>♥ 123</span><span>♟ 12</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="status-card panel">
+        <div class="status-metrics">
+          <div class="metric"><div class="n" id="live-like-count">123</div><div class="l">Likes</div></div>
+          <div class="metric"><div class="n" id="live-listener-count">94</div><div class="l">Listeners</div></div>
+        </div>
+        <div class="status-content">
+          <div>
+            <div class="status-title">YTPlayer / Live</div>
+            <div class="status-copy">TikTok requests and player activity are monitored here.</div>
+          </div>
+          <div class="status-line"><span class="status-dot" id="tt-status-small"></span><span>Waiting for connection</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <section id="artist-strip" class="panel">
+      <button class="strip-arrow" aria-label="Previous">‹</button>
+      <div id="artist-list"></div>
+      <button class="strip-arrow" aria-label="Next">›</button>
+    </section>
+
+  </main>
 </div>
 
 <script>
@@ -234,8 +601,10 @@
     const st = await api("/player/state");
     if (!st) return;
 
-    $("btn-play").innerHTML = st.is_playing && !st.is_paused ? "&#10073;&#10073;" : "&#9658;";
+    const isPlaying = !!(st.is_playing && !st.is_paused);
+    $("btn-play").innerHTML = isPlaying ? "&#10073;&#10073;" : "&#9658;";
     $("btn-shuffle").classList.toggle("active", !!st.shuffle_mode);
+    $("app").classList.toggle("playing", isPlaying);
 
     if (st.current_song) {
       const s = st.current_song;
@@ -243,10 +612,12 @@
       $("song-channel").textContent = s.channel || (s.requested_by ? `Diminta oleh ${s.requested_by}` : "");
       if (s.thumbnail) {
         $("thumb-img").src = s.thumbnail;
+        $("player-art").style.backgroundImage = `url("${String(s.thumbnail).replace(/"/g, "\\\"")}")`;
         $("thumb-img").style.display = "block";
         $("thumb-placeholder").style.display = "none";
       } else {
         $("thumb-img").style.display = "none";
+        $("player-art").style.backgroundImage = "none";
         $("thumb-placeholder").style.display = "flex";
       }
       const durMs = (s.duration || 0) * 1000;
@@ -276,7 +647,8 @@
       .map(
         (item, i) => `
       <div class="qitem" data-pos="${item.position}">
-        <span class="idx">${i + 1}</span>
+        <span class="idx">${String(i + 1).padStart(2, "0")}</span>
+        <img class="qthumb" src="${escapeHtml(item.song.thumbnail || "")}" alt="">
         <div class="meta">
           <div class="t">${escapeHtml(item.song.title || "Unknown")}</div>
           <div class="c">${escapeHtml(item.song.channel || "")}</div>
@@ -347,6 +719,40 @@
   refreshTiktok();
   setInterval(refreshState, 1500);
   setInterval(refreshTiktok, 3000);
+})();
+</script>
+<script>
+/* Visual mirror for the screenshot-style bottom strip.
+   It does not alter the original player/queue API behavior. */
+(function(){
+  const originalRefresh = window.__ytplayer_refreshState;
+  const artistList = document.getElementById("artist-list");
+  const queueList = document.getElementById("queue-list");
+  const countLabel = document.getElementById("queue-count-label");
+
+  function mirrorQueue(){
+    if(!artistList || !queueList) return;
+    const items = [...queueList.querySelectorAll(".qitem")];
+    countLabel.textContent = items.length ? `${items.length} in queue` : "Queue empty";
+    artistList.innerHTML = "";
+    items.slice(0,4).forEach((item, i)=>{
+      const thumb = item.querySelector(".qthumb");
+      const title = item.querySelector(".t")?.textContent || "Unknown";
+      const channel = item.querySelector(".c")?.textContent || "";
+      const el = document.createElement("div");
+      el.className = "artist-item";
+      el.innerHTML = `
+        <img class="artist-avatar" src="${thumb ? thumb.getAttribute("src") : ""}" alt="">
+        <div class="artist-meta">
+          <div class="artist-name">${title.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}</div>
+          <div class="artist-sub">${channel.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}</div>
+        </div>`;
+      artistList.appendChild(el);
+    });
+  }
+  const observer = new MutationObserver(mirrorQueue);
+  observer.observe(queueList,{childList:true,subtree:true});
+  setTimeout(mirrorQueue,300);
 })();
 </script>
 </body>
