@@ -6,5 +6,8 @@ contextBridge.exposeInMainWorld("desktop", {
   close: () => ipcRenderer.send("win:close"),
   toggleAlwaysOnTop: () => ipcRenderer.invoke("win:toggle-always-on-top"),
   getApiBase: () => ipcRenderer.invoke("win:get-api-base"),
+  // Opens (or focuses, if already open) a secondary window.
+  // name: "settings" | "tiktok" | "search"
+  openWindow: (name) => ipcRenderer.send("win:open", name),
   platform: process.platform,
 });
