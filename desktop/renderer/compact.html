@@ -103,12 +103,15 @@ button{color:inherit}
 
 /* ───────── Main screenshot-like grid ───────── */
 #dashboard{
-  flex:1;min-height:0;
+  flex:1 1 auto;
+  min-height:0;
+  height:0;
   display:grid;
   grid-template-columns:1.08fr 1.08fr .88fr;
   grid-template-rows:minmax(0,1fr) 124px;
   gap:14px;
   padding:0 10px 10px;
+  overflow:hidden;
 }
 
 /* shared white panels */
@@ -124,31 +127,52 @@ button{color:inherit}
 #player-panel{
   grid-column:1;
   grid-row:1;
-  padding:10px;
+  padding:10px 10px 12px;
   display:flex;flex-direction:column;
+  min-width:0;
+  min-height:0;
+  overflow:hidden;
 }
 .player-image{
-  width:100%;height:49%;
+  width:100%;
+  height:auto;
+  flex:1 1 auto;
   min-height:100px;
   border-radius:9px;
   background:#e3e1dc;
   overflow:hidden;
-  position:relative;
+  position:relative; /* Container acuan absolut */
 }
+
+/* Biar menumpuk penuh di dalam .player-image */
+#player-art, #thumb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 #player-art{
-  width:100%;height:100%;
-  background-size:cover;background-position:center;
+  background-size:cover;
+  background-position:center;
 }
+
 #thumb-img{
-  width:100%;height:100%;object-fit:cover;
   display:none;
+  z-index: 1;
 }
+
 #thumb-placeholder{
-  position:absolute;inset:0;
-  display:flex;align-items:center;justify-content:center;
-  font-size:28px;color:#aaa69f;
-  background:
-    linear-gradient(135deg,#d9d7d1,#eeece7);
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:28px;
+  color:#aaa69f;
+  background:linear-gradient(135deg,#d9d7d1,#eeece7);
+  z-index: 0;
 }
 #eq{
   position:absolute;left:8px;bottom:8px;
@@ -197,8 +221,14 @@ button{color:inherit}
   background:#171717;border-radius:4px;
 }
 #controls{
-  display:flex;align-items:center;justify-content:center;
-  gap:7px;margin-top:9px;
+  flex:0 0 35px;
+  height:35px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  margin:6px 0 0;
+  position:relative;
 }
 #controls button{
   width:25px;height:25px;border:0;background:transparent;
@@ -209,15 +239,24 @@ button{color:inherit}
 #controls #btn-play{
   width:31px;height:31px;
   background:#171717;color:#fff;
-  font-size:10px;box-shadow:0 4px 10px rgba(0,0,0,.13);
+  font-size:10px;
+  box-shadow:0 4px 10px rgba(0,0,0,.13);
+  display:grid;place-items:center;
+  flex:none;
 }
 #controls #btn-play:hover{background:#333}
 #controls #btn-shuffle.active{color:#171717}
-#volume-row{
-  margin:5px 16px 0;
+
+.volume-container{
+  margin:10px 24px 0;
+  display:flex;flex-direction:column;gap:8px;
+}
+.volume-row{
   display:flex;align-items:center;gap:7px;
 }
-#volume-row span{color:#aaa69f;font-size:8px}
+.volume-row span{
+  color:#aaa69f;font-size:10px;width:14px;text-align:center;
+}
 input[type=range]{
   flex:1;height:3px;appearance:none;-webkit-appearance:none;
   background:#e8e5df;border-radius:4px;outline:none;
@@ -233,14 +272,26 @@ input[type=range]::-webkit-slider-thumb{
   grid-column:2;grid-row:1;
   display:flex;flex-direction:column;
   padding:10px 11px;
+  min-height:0;
 }
 .queue-hero{
-  height:49%;min-height:100px;
+  flex:1;min-height:0;
   border-radius:9px;
   background:#f1efe9;
   padding:12px;
   position:relative;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
 }
+.queue-head{
+  flex:none;
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:10px;
+}
+.queue-copy{min-width:0}
 .queue-kicker{
   font-size:7px;text-transform:uppercase;letter-spacing:.12em;
   color:#aaa69f;font-weight:800;
@@ -252,41 +303,63 @@ input[type=range]::-webkit-slider-thumb{
   margin-top:4px;color:#aaa69f;font-size:8px;
 }
 .queue-pill{
-  position:absolute;right:10px;top:10px;
-  width:25px;height:25px;border-radius:50%;
+  position:static;
+  width:25px;height:25px;min-width:25px;border-radius:50%;
   background:#171717;color:#fff;display:grid;place-items:center;
   font-size:10px;
 }
+.queue-toolbar{
+  flex:none;
+  min-height:25px;
+  margin-top:9px;
+  padding-top:7px;
+  border-top:1px solid rgba(0,0,0,.055);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
 .queue-count{
-  position:absolute;left:12px;bottom:10px;
   font-size:8px;color:#74716b;
 }
 #btn-clear-queue{
-  position:absolute;right:10px;bottom:8px;
   border:0;background:transparent;color:#99958d;
-  font-size:7px;cursor:pointer;
+  font-size:7px;cursor:pointer;padding:3px 0;
 }
 #btn-clear-queue:hover{color:#d95757}
 #queue-list{
   flex:1;min-height:0;
   display:flex;flex-direction:column;
-  overflow:hidden;padding-top:8px;
+  overflow-y:auto;overflow-x:hidden;
+  padding:5px 2px 0 0;
+  overscroll-behavior:contain;
+  scrollbar-width:thin;
+  scrollbar-color:#c9c6be transparent;
 }
+#queue-list::-webkit-scrollbar{width:5px}
+#queue-list::-webkit-scrollbar-track{background:transparent}
+#queue-list::-webkit-scrollbar-thumb{
+  background:#c9c6be;border-radius:8px;
+}
+#queue-list::-webkit-scrollbar-thumb:hover{background:#aaa69f}
 .qitem{
-  min-height:31px;
+  min-height:34px;flex:none;
   display:grid;
-  grid-template-columns:26px 1fr 20px;
+  grid-template-columns:28px 1fr 20px;
   gap:7px;align-items:center;
   padding:4px 3px;
-  border-bottom:1px solid #efede8;
+  border-bottom:1px solid #e5e2db;
+  cursor:pointer;
+  border-radius:7px;
 }
 .qitem:last-child{border-bottom:0}
-.qitem:hover{background:#faf9f5;border-radius:7px}
+.qitem:hover{background:#faf9f5}
+.qitem.playing-next{background:#f1efe9}
 .qitem .idx{
-  color:#aaa69f;font:7px Consolas,monospace;text-align:center;
+  display:none;
 }
 .qthumb{
-  display:none;
+  display:block;width:28px;height:28px;border-radius:6px;
+  object-fit:cover;background:#e3e1dc;flex:none;
 }
 .qitem .meta{min-width:0}
 .qitem .t{
@@ -310,11 +383,23 @@ input[type=range]::-webkit-slider-thumb{
 
 /* ───────── Right: live / status ───────── */
 #live-panel{
-  grid-column:3;grid-row:1;
-  display:flex;flex-direction:column;gap:10px;
+  grid-column:3;
+  /* Kunci perbaikan: span 2 baris penuh dari atas sampai sejajar bawah artist-strip */
+  grid-row:1 / span 2;
+  display:grid;
+  grid-template-rows:140px minmax(0,1fr);
+  gap:14px;
+  min-width:0;
+  min-height:0;
+  height:100%;
+  align-self:stretch;
+  overflow:hidden;
 }
 .live-card{
-  flex:1;
+  min-width:0;
+  min-height:0;
+  height:100%;
+  align-self:stretch;
   background:#f7f5ef;
   border-radius:11px;
   padding:9px;
@@ -359,29 +444,75 @@ input[type=range]::-webkit-slider-thumb{
 .live-stats{
   margin-top:6px;display:flex;gap:10px;font-size:7px;opacity:.85;
 }
+.live-connect-btn{
+  margin-top:8px;width:100%;border:0;border-radius:8px;
+  padding:6px 0;font-size:7.5px;font-weight:800;letter-spacing:.04em;
+  text-transform:uppercase;cursor:pointer;
+  background:rgba(255,255,255,.16);color:#fff;
+  backdrop-filter:blur(2px);
+}
+.live-connect-btn:hover{background:rgba(255,255,255,.26)}
+.live-connect-btn.connected{background:var(--red)}
+.live-connect-btn.connected:hover{background:#c34747}
+
 .status-card{
-  height:42%;
+  min-height:0;
+  height:100%;
+  min-width:0;
+  align-self:stretch;
   background:#fffefa;border-radius:11px;
-  display:grid;grid-template-columns:44px 1fr;
+  display:flex;flex-direction:column;
   overflow:hidden;
 }
+.status-header{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:6px;padding:8px 9px;
+  border-bottom:1px solid #f0eee8;
+  flex:0 0 auto;
+}
 .status-metrics{
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:10px;border-right:1px solid #eeeae2;
+  display:flex;align-items:center;gap:9px;
 }
 .metric{text-align:center}
 .metric .n{font-size:10px;font-weight:800}
-.metric .l{margin-top:2px;font-size:6.5px;color:#aaa69f}
-.status-content{
-  padding:9px;display:flex;flex-direction:column;justify-content:space-between;
-}
+.metric .l{margin-top:1px;font-size:6px;color:#aaa69f}
+.status-title-block{text-align:right;min-width:0}
 .status-title{font-size:8px;font-weight:800}
-.status-copy{font-size:7px;color:#aaa69f;line-height:1.4}
 .status-line{
-  display:flex;align-items:center;gap:5px;
-  font-size:7px;color:#77736c;
+  margin-top:2px;display:flex;align-items:center;justify-content:flex-end;gap:5px;
+  font-size:6.5px;color:#77736c;white-space:nowrap;
 }
 .status-line .status-dot{width:5px;height:5px}
+#chat-feed{
+  flex:1 1 auto;
+  min-height:0;
+  height:0;
+  overflow-y:auto;
+  overflow-x:hidden;
+  padding:6px 9px 9px;
+  display:flex;flex-direction:column;gap:7px;
+  overscroll-behavior:contain;
+  scrollbar-width:thin;
+  scrollbar-color:#c9c6be transparent;
+}
+#chat-feed::-webkit-scrollbar{width:5px}
+#chat-feed::-webkit-scrollbar-track{background:transparent}
+#chat-feed::-webkit-scrollbar-thumb{
+  background:#c9c6be;border-radius:8px;
+}
+#chat-feed::-webkit-scrollbar-thumb:hover{background:#aaa69f}
+#chat-feed .chat-empty{
+  margin:auto;color:#b4b0a8;font-size:8px;text-align:center;
+}
+.chat-msg{display:flex;gap:6px;align-items:flex-start}
+.chat-msg .ca{
+  width:16px;height:16px;border-radius:50%;flex:none;margin-top:1px;
+  background:#e3e1dc;object-fit:cover;
+}
+.chat-msg .cb{min-width:0;font-size:8px;line-height:1.45}
+.chat-msg .cu{font-weight:800;color:#171717;margin-right:4px}
+.chat-msg .ct{color:#5c5952;word-break:break-word}
+.chat-msg.sys .ct{color:#aaa69f;font-style:italic}
 
 /* ───────── Bottom strip ───────── */
 #artist-strip{
@@ -397,18 +528,31 @@ input[type=range]::-webkit-slider-thumb{
 .strip-arrow:hover{color:#111}
 #artist-list{
   flex:1;height:100%;
-  display:flex;align-items:center;justify-content:space-evenly;
-  gap:8px;overflow:hidden;
+  display:flex;align-items:center;
+  gap:16px;overflow-x:auto;overflow-y:hidden;
+  scroll-behavior:smooth;
+}
+#artist-list::-webkit-scrollbar{display:none}
+#gift-empty{
+  margin:auto;color:#b4b0a8;font-size:8px;text-align:center;
+  white-space:nowrap;
 }
 .artist-item{
-  min-width:100px;max-width:135px;
+  min-width:100px;max-width:150px;flex:none;
   display:flex;align-items:center;gap:8px;
+  animation:gift-in .25s ease-out;
 }
+@keyframes gift-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 .artist-avatar{
   width:38px;height:38px;border-radius:50%;
   background:#dedbd3;flex:none;
   object-fit:cover;
   box-shadow:inset 0 0 0 1px rgba(0,0,0,.05);
+}
+.artist-avatar.fallback{
+  display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:800;color:#fff;
+  background:linear-gradient(135deg,#171717,#4a4a4a);
 }
 .artist-meta{min-width:0}
 .artist-name{
@@ -418,21 +562,6 @@ input[type=range]::-webkit-slider-thumb{
 .artist-sub{
   margin-top:3px;font-size:6.5px;color:#aaa69f;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-}
-#artist-list .qitem{
-  display:flex;min-height:auto;border:0;padding:0;
-}
-#artist-list .qitem .idx,
-#artist-list .qitem .meta,
-#artist-list .qitem button{display:none}
-#artist-list .qitem .qthumb{display:block;width:38px;height:38px;border-radius:50%;object-fit:cover}
-
-/* Existing queue renderer is mapped into the lower strip by CSS/JS helper. */
-#artist-list .qitem:after{
-  content:"";display:block;
-}
-#queue-list .qitem{ /* keep normal queue invisible; artist strip mirrors it */
-  display:none;
 }
 
 /* responsive compact */
@@ -501,22 +630,39 @@ input[type=range]::-webkit-slider-thumb{
         <button id="btn-play" title="Play/Pause">▶</button>
         <button id="btn-stop" title="Stop">■</button>
       </div>
-      <div id="volume-row">
-        <span>🔊</span>
-        <input type="range" id="volume-slider" min="0" max="150" value="100">
+      
+      <div class="volume-container">
+        <div class="volume-row" title="Music Volume">
+          <span>🎵</span>
+          <input type="range" id="volume-slider" min="0" max="150" value="100">
+        </div>
+        <div class="volume-row" title="TTS Volume">
+          <span>🗣️</span>
+          <input type="range" id="volume-slider-tts" min="0" max="150" value="100">
+        </div>
       </div>
     </section>
 
     <section id="queue-panel" class="panel">
       <div class="queue-hero">
-        <div class="queue-kicker">Your playlist</div>
-        <div class="queue-heading">One track at a time</div>
-        <div class="queue-sub">Songs waiting in the playback queue</div>
-        <div class="queue-pill">♥</div>
-        <div class="queue-count" id="queue-count-label">Queue</div>
-        <button id="btn-clear-queue">CLEAR</button>
+        <div class="queue-head">
+          <div class="queue-copy">
+            <div class="queue-kicker">Your playlist</div>
+            <div class="queue-heading">One track at a time</div>
+            <div class="queue-sub">Songs waiting in the playback queue</div>
+          </div>
+          <div class="queue-pill">♥</div>
+        </div>
+
+        <div class="queue-toolbar">
+          <div class="queue-count" id="queue-count-label">Queue</div>
+          <button id="btn-clear-queue">CLEAR</button>
+        </div>
+
+        <div id="queue-list">
+          <div id="queue-empty">Antrian kosong</div>
+        </div>
       </div>
-      <div id="queue-list"><div id="queue-empty">Antrian kosong</div></div>
     </section>
 
     <aside id="live-panel">
@@ -525,30 +671,30 @@ input[type=range]::-webkit-slider-thumb{
           <div class="live-now"><span class="status-dot"></span> Live now</div>
           <div class="live-info">
             <div class="live-label">TikTok Live</div>
-            <div class="live-name">Connection status</div>
-            <div class="live-place">TikTok listener bridge</div>
-            <div class="live-stats"><span>♥ 123</span><span>♟ 12</span></div>
+            <div class="live-name" id="tt-live-name">Belum terhubung</div>
+            <div class="live-place" id="tt-live-place">Isi username TikTok di Settings</div>
+            <div class="live-stats"><span>♥ <span id="live-like-count">0</span></span><span>🎁 <span id="live-gift-count">0</span></span></div>
+            <button id="btn-tt-connect" class="live-connect-btn">Connect</button>
           </div>
         </div>
       </div>
       <div class="status-card panel">
-        <div class="status-metrics">
-          <div class="metric"><div class="n" id="live-like-count">123</div><div class="l">Likes</div></div>
-          <div class="metric"><div class="n" id="live-listener-count">94</div><div class="l">Listeners</div></div>
-        </div>
-        <div class="status-content">
-          <div>
-            <div class="status-title">YTPlayer / Live</div>
-            <div class="status-copy">TikTok requests and player activity are monitored here.</div>
+        <div class="status-header">
+          <div class="status-metrics">
+            <div class="metric"><div class="n" id="live-chat-count">0</div><div class="l">Chats</div></div>
           </div>
-          <div class="status-line"><span class="status-dot" id="tt-status-small"></span><span>Waiting for connection</span></div>
+          <div class="status-title-block">
+            <div class="status-title">Live Chat</div>
+            <div class="status-line"><span class="status-dot" id="tt-status-small"></span><span id="tt-status-small-text">Waiting for connection</span></div>
+          </div>
         </div>
+        <div id="chat-feed"><div class="chat-empty">Belum ada aktivitas chat</div></div>
       </div>
     </aside>
 
     <section id="artist-strip" class="panel">
       <button class="strip-arrow" aria-label="Previous">‹</button>
-      <div id="artist-list"></div>
+      <div id="artist-list"><div id="gift-empty">Belum ada gift</div></div>
       <button class="strip-arrow" aria-label="Next">›</button>
     </section>
 
@@ -639,30 +785,55 @@ input[type=range]::-webkit-slider-thumb{
 
   function renderQueue(queue) {
     const list = $("queue-list");
+    $("queue-count-label").textContent = queue.length ? `${queue.length} in queue` : "Queue empty";
     if (!queue.length) {
       list.innerHTML = '<div id="queue-empty">Antrian kosong</div>';
       return;
     }
     list.innerHTML = queue
-      .map(
-        (item, i) => `
-      <div class="qitem" data-pos="${item.position}">
-        <span class="idx">${String(i + 1).padStart(2, "0")}</span>
-        <img class="qthumb" src="${escapeHtml(item.song.thumbnail || "")}" alt="">
+      .map((item) => {
+        const song = item.song || {};
+        const requester = song.requested_by ? `Diminta oleh ${song.requested_by}` : (song.channel || "");
+        return `
+      <div class="qitem" data-pos="${item.position}" title="Klik untuk putar sekarang">
+        <img class="qthumb" src="${escapeHtml(song.thumbnail || "")}" alt="">
         <div class="meta">
-          <div class="t">${escapeHtml(item.song.title || "Unknown")}</div>
-          <div class="c">${escapeHtml(item.song.channel || "")}</div>
+          <div class="t">${escapeHtml(song.title || "Unknown")}</div>
+          <div class="c">${escapeHtml(requester)}</div>
         </div>
         <button class="qremove" data-pos="${item.position}" title="Hapus">&#10005;</button>
-      </div>`
-      )
+      </div>`;
+      })
       .join("");
     list.querySelectorAll(".qremove").forEach((btn) => {
-      btn.onclick = async () => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
         await api(`/queue/${btn.dataset.pos}`, { method: "DELETE" });
         refreshState();
       };
     });
+    list.querySelectorAll(".qitem").forEach((el) => {
+      el.onclick = () => playQueueItem(parseInt(el.dataset.pos, 10));
+    });
+  }
+
+  // ── Click a queued song → moves it to front and plays it immediately ─
+  let playRequestInFlight = false;
+  async function playQueueItem(position) {
+    if (playRequestInFlight || Number.isNaN(position)) return;
+    playRequestInFlight = true;
+    try {
+      if (position !== 0) {
+        await api("/queue/reorder", {
+          method: "PUT",
+          body: JSON.stringify({ from_position: position, to_position: 0 }),
+        });
+      }
+      await api("/queue/next", { method: "POST" });
+      refreshState();
+    } finally {
+      playRequestInFlight = false;
+    }
   }
 
   function escapeHtml(str) {
@@ -694,17 +865,33 @@ input[type=range]::-webkit-slider-thumb{
       api("/player/volume", { method: "POST", body: JSON.stringify({ music: parseInt(e.target.value, 10) }) });
     }, 200);
   };
+  
+  let ttsVolumeDebounce = null;
+  $("volume-slider-tts").oninput = (e) => {
+    clearTimeout(ttsVolumeDebounce);
+    ttsVolumeDebounce = setTimeout(() => {
+      api("/player/volume", { method: "POST", body: JSON.stringify({ tts: parseInt(e.target.value, 10) }) });
+    }, 200);
+  };
+
   (async () => {
     const v = await api("/player/volume");
-    if (v) $("volume-slider").value = v.music;
+    if (v) {
+      if (v.music !== undefined) $("volume-slider").value = v.music;
+      if (v.tts !== undefined) $("volume-slider-tts").value = v.tts;
+    }
   })();
 
-  // ── TikTok status polling (just the dot + pending-request badge) ─
+  // ── TikTok status polling (dot + badge + connect button + live card) ─
+  let ttConnected = false;
   async function refreshTiktok() {
     const st = await api("/tiktok/status");
     if (!st) return;
-    $("tt-dot-title").classList.toggle("connected", !!st.connected);
-    $("tt-dot-toolbar").classList.toggle("connected", !!st.connected);
+    ttConnected = !!st.connected;
+    $("tt-dot-title").classList.toggle("connected", ttConnected);
+    $("tt-dot-toolbar").classList.toggle("connected", ttConnected);
+    $("tt-status-small").classList.toggle("connected", ttConnected);
+
     const pending = (st.recent_requests || []).filter((r) => r.status === "searching").length;
     const badge = $("tt-badge");
     if (pending > 0) {
@@ -713,46 +900,118 @@ input[type=range]::-webkit-slider-thumb{
     } else {
       badge.classList.remove("show");
     }
+
+    const btn = $("btn-tt-connect");
+    btn.textContent = ttConnected ? "Disconnect" : "Connect";
+    btn.classList.toggle("connected", ttConnected);
+
+    if (ttConnected) {
+      $("tt-live-name").textContent = `@${st.username || "?"} · Live`;
+      $("tt-live-place").textContent = "Terhubung ke TikTok Live";
+      $("tt-status-small-text").textContent = "Terhubung";
+    } else if (st.username) {
+      $("tt-live-name").textContent = `@${st.username}`;
+      $("tt-live-place").textContent = st.error ? `Error: ${st.error}` : "Terputus - klik Connect";
+      $("tt-status-small-text").textContent = "Terputus";
+    } else {
+      $("tt-live-name").textContent = "Belum terhubung";
+      $("tt-live-place").textContent = "Isi username TikTok di Settings";
+      $("tt-status-small-text").textContent = "Waiting for connection";
+    }
   }
+
+  $("btn-tt-connect").onclick = async () => {
+    const btn = $("btn-tt-connect");
+    btn.disabled = true;
+    try {
+      if (ttConnected) await api("/tiktok/disconnect", { method: "POST" });
+      else await api("/tiktok/reconnect", { method: "POST" });
+      await refreshTiktok();
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  // ── Live chat (blue box) + gift feed (bottom black strip) via SSE ─
+  const escapeAttr = escapeHtml;
+  function avatarImg(url, name, cls) {
+    if (url) {
+      return `<img class="${cls}" src="${API}/proxy/avatar?url=${encodeURIComponent(url)}" alt="">`;
+    }
+    const letter = escapeAttr((name || "?").trim().charAt(0).toUpperCase() || "?");
+    return `<div class="${cls} fallback">${letter}</div>`;
+  }
+
+  const MAX_CHAT = 60;
+  let chatCount = 0;
+  function pushChatMsg(d) {
+    const box = $("chat-feed");
+    if (box.querySelector(".chat-empty")) box.innerHTML = "";
+    const isSys = d.type === "like" || d.type === "follow";
+    const text = d.type === "chat" ? (d.text || "") : (d.detail || "");
+    const row = document.createElement("div");
+    row.className = "chat-msg" + (isSys ? " sys" : "");
+    row.innerHTML = `${avatarImg(d.avatar, d.user, "ca")}<div class="cb"><span class="cu">${escapeHtml(d.user || "?")}</span><span class="ct">${escapeHtml(text)}</span></div>`;
+    box.appendChild(row);
+    while (box.children.length > MAX_CHAT) box.removeChild(box.firstChild);
+    box.scrollTop = box.scrollHeight;
+    chatCount++;
+    $("live-chat-count").textContent = chatCount > 999 ? "999+" : String(chatCount);
+  }
+
+  const MAX_GIFTS = 25;
+  let giftCount = 0;
+  let likeCount = 0;
+  function pushGift(d) {
+    const box = $("artist-list");
+    const empty = $("gift-empty");
+    if (empty) empty.remove();
+    const el = document.createElement("div");
+    el.className = "artist-item";
+    el.innerHTML = `${avatarImg(d.avatar, d.user, "artist-avatar")}<div class="artist-meta"><div class="artist-name">${escapeHtml(d.user || "?")}</div><div class="artist-sub">${escapeHtml(d.detail || "")}</div></div>`;
+    box.insertBefore(el, box.firstChild);
+    while (box.children.length > MAX_GIFTS) box.removeChild(box.lastChild);
+    box.scrollLeft = 0;
+    giftCount++;
+    $("live-gift-count").textContent = giftCount > 999 ? "999+" : String(giftCount);
+  }
+
+  function connectLiveFeed() {
+    let es;
+    try { es = new EventSource(`${API}/overlay/events`); } catch (e) { return; }
+    es.addEventListener("tiktok_chat", (ev) => {
+      try {
+        const d = JSON.parse(ev.data);
+        if (d.type === "gift") {
+          pushGift(d);
+        } else if (d.type === "like") {
+          likeCount += 1;
+          $("live-like-count").textContent = likeCount > 999 ? "999+" : String(likeCount);
+          pushChatMsg(d);
+        } else {
+          pushChatMsg(d);
+        }
+      } catch (e) {}
+    });
+    es.addEventListener("tiktok_status", () => refreshTiktok());
+    es.addEventListener("skip_vote", () => refreshState());
+    es.addEventListener("tiktok_request", () => refreshTiktok());
+    es.onerror = () => { /* EventSource retries automatically */ };
+  }
+
+  // ── Gift strip scroll arrows ───────────────────
+  document.querySelectorAll("#artist-strip .strip-arrow").forEach((btn, i) => {
+    btn.onclick = () => {
+      const list = $("artist-list");
+      list.scrollBy({ left: i === 0 ? -160 : 160, behavior: "smooth" });
+    };
+  });
 
   refreshState();
   refreshTiktok();
+  connectLiveFeed();
   setInterval(refreshState, 1500);
   setInterval(refreshTiktok, 3000);
-})();
-</script>
-<script>
-/* Visual mirror for the screenshot-style bottom strip.
-   It does not alter the original player/queue API behavior. */
-(function(){
-  const originalRefresh = window.__ytplayer_refreshState;
-  const artistList = document.getElementById("artist-list");
-  const queueList = document.getElementById("queue-list");
-  const countLabel = document.getElementById("queue-count-label");
-
-  function mirrorQueue(){
-    if(!artistList || !queueList) return;
-    const items = [...queueList.querySelectorAll(".qitem")];
-    countLabel.textContent = items.length ? `${items.length} in queue` : "Queue empty";
-    artistList.innerHTML = "";
-    items.slice(0,4).forEach((item, i)=>{
-      const thumb = item.querySelector(".qthumb");
-      const title = item.querySelector(".t")?.textContent || "Unknown";
-      const channel = item.querySelector(".c")?.textContent || "";
-      const el = document.createElement("div");
-      el.className = "artist-item";
-      el.innerHTML = `
-        <img class="artist-avatar" src="${thumb ? thumb.getAttribute("src") : ""}" alt="">
-        <div class="artist-meta">
-          <div class="artist-name">${title.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}</div>
-          <div class="artist-sub">${channel.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}</div>
-        </div>`;
-      artistList.appendChild(el);
-    });
-  }
-  const observer = new MutationObserver(mirrorQueue);
-  observer.observe(queueList,{childList:true,subtree:true});
-  setTimeout(mirrorQueue,300);
 })();
 </script>
 </body>

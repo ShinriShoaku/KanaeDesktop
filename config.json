@@ -1,5 +1,5 @@
 {
-  "tiktok_username": "@masukan-username-tiktok",
+  "tiktok_username": "@iamurkira",
   "commands": {
     "request": [
       "#req",
@@ -35,9 +35,9 @@
     "enabled": false,
     "voice": "id-ID-ArdiNeural",
     "rate": "+0%",
-    "volume": "+0%",
+    "volume": "+63%",
     "max_length": 100,
-    "volume_pct": 0,
+    "volume_pct": 63,
     "_comment": "Text-to-Speech untuk komentar chat biasa (bukan command, bukan diawali @)",
     "_comment_voice": "Contoh suara: id-ID-ArdiNeural (pria ID), id-ID-GadisNeural (wanita ID), en-US-GuyNeural (pria EN), en-US-JennyNeural (wanita EN)",
     "_comment_rate": "Kecepatan bicara: -50% s/d +100% (default +0%)",
