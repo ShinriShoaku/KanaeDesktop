@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<title>YTPlayer</title>
+<style>
+  :root {
+    --accent: #f97316;
+    --accent2: #a855f7;
+    --bg: #0e0e14;
+    --panel: #17171f;
+    --panel2: #1e1e28;
+    --border: #2a2a36;
+    --text: #eceef2;
+    --text-dim: #8b8d9a;
+    --danger: #ef4444;
+    --ok: #22c55e;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 13px; user-select: none;
+  }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* ── Titlebar ─────────────────────────── */
+  #titlebar {
+    -webkit-app-region: drag;
+    display: flex; align-items: center; justify-content: space-between;
+    height: 34px; padding: 0 8px 0 12px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #titlebar .brand { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--text-dim); font-size: 12px; }
+  #titlebar .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); transition: background .2s; }
+  #titlebar .dot.connected { background: var(--ok); }
+  #titlebar .win-btns { -webkit-app-region: no-drag; display: flex; gap: 2px; }
+  #titlebar button {
+    -webkit-app-region: no-drag;
+    width: 26px; height: 26px; border: none; background: transparent; color: var(--text-dim);
+    cursor: pointer; border-radius: 5px; font-size: 13px; display:flex; align-items:center; justify-content:center;
+  }
+  #titlebar button:hover { background: var(--panel2); color: var(--text); }
+  #titlebar button.close:hover { background: var(--danger); color: #fff; }
+  #titlebar button.pin.active { color: var(--accent); }
+
+  /* ── Now playing ──────────────────────── */
+  #nowplaying { padding: 14px 16px 10px; flex-shrink: 0; }
+  #thumb-wrap {
+    width: 100%; aspect-ratio: 1 / 1; max-height: 150px; border-radius: 10px; overflow: hidden;
+    background: linear-gradient(135deg, var(--panel2), var(--panel));
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border); margin-bottom: 10px;
+  }
+  #thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: none; }
+  #thumb-wrap .placeholder { color: var(--text-dim); font-size: 28px; }
+
+  #song-title { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #song-channel { color: var(--text-dim); font-size: 11.5px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  #progress-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  #progress-bar { flex: 1; height: 4px; border-radius: 3px; background: var(--panel2); position: relative; cursor: default; overflow: hidden; }
+  #progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 3px; }
+  #time-elapsed, #time-total { font-size: 10.5px; color: var(--text-dim); min-width: 32px; text-align: center; }
+
+  /* ── Controls ─────────────────────────── */
+  #controls { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 12px; }
+  #controls button {
+    border: none; background: var(--panel2); color: var(--text);
+    border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: background .15s, transform .1s;
+  }
+  #controls button:hover { background: var(--border); }
+  #controls button:active { transform: scale(0.92); }
+  #btn-play { width: 46px; height: 46px; background: var(--accent); font-size: 17px; }
+  #btn-play:hover { background: #ea6c0c; }
+  #btn-skip, #btn-stop { width: 34px; height: 34px; font-size: 13px; }
+  #btn-shuffle { width: 30px; height: 30px; font-size: 12px; color: var(--text-dim); }
+  #btn-shuffle.active { color: var(--accent); background: rgba(249,115,22,0.15); }
+
+  #volume-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 0 2px; }
+  #volume-row span { font-size: 12px; color: var(--text-dim); width: 14px; text-align:center; }
+  input[type=range] {
+    flex: 1; -webkit-appearance: none; height: 3px; border-radius: 3px; background: var(--panel2); outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%; background: var(--accent); cursor: pointer;
+  }
+
+  /* ── Search ───────────────────────────── */
+  #search-row { display: flex; gap: 6px; padding: 0 16px; margin-top: 12px; flex-shrink: 0; }
+  #search-input {
+    flex: 1; background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 7px; padding: 7px 10px; font-size: 12.5px; outline: none;
+  }
+  #search-input:focus { border-color: var(--accent); }
+  #search-btn {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: 7px; padding: 0 12px; cursor: pointer; font-size: 12.5px;
+  }
+  #search-btn:hover { color: var(--text); }
+  #search-results {
+    position: absolute; left: 16px; right: 16px; margin-top: 46px; z-index: 20;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    max-height: 220px; overflow-y: auto; display: none; box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  }
+  #search-results .item { display: flex; gap: 8px; padding: 7px 8px; cursor: pointer; align-items: center; }
+  #search-results .item:hover { background: var(--panel2); }
+  #search-results img { width: 36px; height: 36px; border-radius: 4px; object-fit: cover; flex-shrink: 0; background: var(--panel2); }
+  #search-results .meta { min-width: 0; }
+  #search-results .meta .t { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #search-results .meta .c { font-size: 10.5px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ── Tabs ─────────────────────────────── */
+  #tabs { display: flex; gap: 4px; padding: 12px 16px 6px; flex-shrink: 0; }
+  #tabs button {
+    flex: 1; background: var(--panel2); border: 1px solid transparent; color: var(--text-dim);
+    padding: 6px 0; border-radius: 6px; cursor: pointer; font-size: 11.5px; font-weight: 600;
+  }
+  #tabs button.active { color: var(--text); border-color: var(--accent); background: rgba(249,115,22,0.12); }
+
+  #panels { flex: 1; overflow-y: auto; padding: 4px 16px 14px; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* Queue panel */
+  #queue-list .qitem {
+    display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--border);
+  }
+  #queue-list .qitem .idx { color: var(--text-dim); font-size: 10.5px; width: 14px; flex-shrink: 0; }
+  #queue-list .qitem .meta { flex: 1; min-width: 0; }
+  #queue-list .qitem .t { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #queue-list .qitem .c { font-size: 10px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #queue-list .qitem button {
+    width: 20px; height: 20px; border: none; border-radius: 4px; background: transparent; color: var(--text-dim); cursor: pointer; font-size: 12px;
+  }
+  #queue-list .qitem button:hover { background: var(--danger); color: #fff; }
+  #queue-empty, #tiktok-empty { color: var(--text-dim); font-size: 12px; text-align: center; padding: 20px 0; }
+  #queue-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+  #queue-actions button {
+    background: none; border: none; color: var(--text-dim); font-size: 11px; cursor: pointer; padding: 4px 6px;
+  }
+  #queue-actions button:hover { color: var(--danger); }
+
+  /* TikTok panel */
+  #tt-status { display: flex; align-items: center; justify-content: space-between; padding: 6px 4px 10px; }
+  #tt-status .left { display: flex; align-items: center; gap: 7px; }
+  #tt-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
+  #tt-status .dot.connected { background: var(--ok); }
+  #tt-status .uname { font-size: 12px; color: var(--text-dim); }
+  #tt-toggle {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 5px 10px; font-size: 11px; cursor: pointer;
+  }
+  #tt-toggle:hover { border-color: var(--accent); }
+  #tt-skipvote { font-size: 11px; color: var(--text-dim); padding: 0 4px 8px; }
+  .req-item { padding: 6px 4px; border-bottom: 1px solid var(--border); font-size: 11.5px; }
+  .req-item .u { color: var(--accent2); font-weight: 600; }
+  .req-item .txt { color: var(--text-dim); }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="titlebar">
+    <div class="brand"><span class="dot" id="tt-dot-title"></span> YTPlayer</div>
+    <div class="win-btns">
+      <button class="pin" id="btn-pin" title="Selalu di atas">📌</button>
+      <button id="btn-min" title="Minimize">&#8211;</button>
+      <button class="close" id="btn-close" title="Tutup">&#10005;</button>
+    </div>
+  </div>
+
+  <div id="nowplaying">
+    <div id="thumb-wrap">
+      <img id="thumb-img" alt="" />
+      <div class="placeholder" id="thumb-placeholder">&#127925;</div>
+    </div>
+    <div id="song-title">Tidak ada yang diputar</div>
+    <div id="song-channel">&nbsp;</div>
+    <div id="progress-row">
+      <span id="time-elapsed">0:00</span>
+      <div id="progress-bar"><div id="progress-fill"></div></div>
+      <span id="time-total">0:00</span>
+    </div>
+    <div id="controls">
+      <button id="btn-shuffle" title="Shuffle">&#128256;</button>
+      <button id="btn-play" title="Play/Pause">&#9658;</button>
+      <button id="btn-skip" title="Skip">&#9197;</button>
+      <button id="btn-stop" title="Stop">&#9632;</button>
+    </div>
+    <div id="volume-row">
+      <span>&#128264;</span>
+      <input type="range" id="volume-slider" min="0" max="150" value="100" />
+    </div>
+  </div>
+
+  <div style="position:relative;">
+    <div id="search-row">
+      <input id="search-input" type="text" placeholder="Cari lagu di YouTube..." />
+      <button id="search-btn">Cari</button>
+    </div>
+    <div id="search-results"></div>
+  </div>
+
+  <div id="tabs">
+    <button class="active" data-tab="queue">Antrian</button>
+    <button data-tab="tiktok">TikTok Live</button>
+  </div>
+
+  <div id="panels">
+    <div class="panel active" id="panel-queue">
+      <div id="queue-list"><div id="queue-empty">Antrian kosong</div></div>
+      <div id="queue-actions"><button id="btn-clear-queue">Kosongkan antrian</button></div>
+    </div>
+    <div class="panel" id="panel-tiktok">
+      <div id="tt-status">
+        <div class="left"><span class="dot" id="tt-dot"></span><span class="uname" id="tt-username">Belum terhubung</span></div>
+        <button id="tt-toggle">Connect</button>
+      </div>
+      <div id="tt-skipvote"></div>
+      <div id="tt-requests"><div id="tiktok-empty">Belum ada request</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(async function () {
+  const API = (window.desktop && await window.desktop.getApiBase()) ||
+    (new URLSearchParams(location.search).get("port") ? `http://localhost:${new URLSearchParams(location.search).get("port")}` : "http://localhost:8000");
+
+  const $ = (id) => document.getElementById(id);
+  const fmtTime = (ms) => {
+    if (!ms || ms < 0) return "0:00";
+    const total = Math.floor(ms / 1000);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  };
+
+  async function api(path, opts) {
+    try {
+      const res = await fetch(API + path, {
+        headers: opts && opts.body ? { "Content-Type": "application/json" } : undefined,
+        ...opts,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // ── Titlebar buttons ──────────────────────────
+  $("btn-min").onclick = () => window.desktop && window.desktop.minimize();
+  $("btn-close").onclick = () => window.desktop && window.desktop.close();
+  $("btn-pin").onclick = async () => {
+    if (!window.desktop) return;
+    const active = await window.desktop.toggleAlwaysOnTop();
+    $("btn-pin").classList.toggle("active", active);
+  };
+
+  // ── Player state polling ──────────────────────
+  let lastSong = null;
+  async function refreshState() {
+    const st = await api("/player/state");
+    if (!st) return;
+
+    $("btn-play").innerHTML = st.is_playing && !st.is_paused ? "&#10073;&#10073;" : "&#9658;";
+    $("btn-shuffle").classList.toggle("active", !!st.shuffle_mode);
+
+    if (st.current_song) {
+      const s = st.current_song;
+      $("song-title").textContent = s.title || "Unknown";
+      $("song-channel").textContent = s.channel || (s.requested_by ? `Diminta oleh ${s.requested_by}` : "");
+      if (s.thumbnail) {
+        $("thumb-img").src = s.thumbnail;
+        $("thumb-img").style.display = "block";
+        $("thumb-placeholder").style.display = "none";
+      } else {
+        $("thumb-img").style.display = "none";
+        $("thumb-placeholder").style.display = "flex";
+      }
+      const durMs = (s.duration || 0) * 1000;
+      $("time-total").textContent = fmtTime(durMs);
+      $("time-elapsed").textContent = fmtTime(st.elapsed_ms || 0);
+      $("progress-fill").style.width = durMs > 0 ? Math.min(100, ((st.elapsed_ms || 0) / durMs) * 100) + "%" : "0%";
+    } else {
+      $("song-title").textContent = "Tidak ada yang diputar";
+      $("song-channel").textContent = "";
+      $("thumb-img").style.display = "none";
+      $("thumb-placeholder").style.display = "flex";
+      $("time-total").textContent = "0:00";
+      $("time-elapsed").textContent = "0:00";
+      $("progress-fill").style.width = "0%";
+    }
+
+    renderQueue(st.queue || []);
+  }
+
+  function renderQueue(queue) {
+    const list = $("queue-list");
+    if (!queue.length) {
+      list.innerHTML = '<div id="queue-empty">Antrian kosong</div>';
+      return;
+    }
+    list.innerHTML = queue
+      .map(
+        (item, i) => `
+      <div class="qitem" data-pos="${item.position}">
+        <span class="idx">${i + 1}</span>
+        <div class="meta">
+          <div class="t">${escapeHtml(item.song.title || "Unknown")}</div>
+          <div class="c">${escapeHtml(item.song.channel || "")}</div>
+        </div>
+        <button class="qremove" data-pos="${item.position}" title="Hapus">&#10005;</button>
+      </div>`
+      )
+      .join("");
+    list.querySelectorAll(".qremove").forEach((btn) => {
+      btn.onclick = async () => {
+        await api(`/queue/${btn.dataset.pos}`, { method: "DELETE" });
+        refreshState();
+      };
+    });
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // ── Controls ───────────────────────────────────
+  $("btn-play").onclick = async () => {
+    const st = await api("/player/state");
+    if (!st) return;
+    if (!st.current_song) {
+      await api("/queue/next", { method: "POST" });
+    } else if (st.is_playing && !st.is_paused) {
+      await api("/player/pause", { method: "POST" });
+    } else {
+      await api("/player/resume", { method: "POST" });
+    }
+    refreshState();
+  };
+  $("btn-skip").onclick = async () => { await api("/queue/next", { method: "POST" }); refreshState(); };
+  $("btn-stop").onclick = async () => { await api("/player/stop", { method: "POST" }); refreshState(); };
+  $("btn-shuffle").onclick = async () => { await api("/queue/shuffle", { method: "POST" }); refreshState(); };
+  $("btn-clear-queue").onclick = async () => { await api("/queue/clear", { method: "POST" }); refreshState(); };
+
+  let volumeDebounce = null;
+  $("volume-slider").oninput = (e) => {
+    clearTimeout(volumeDebounce);
+    volumeDebounce = setTimeout(() => {
+      api("/player/volume", { method: "POST", body: JSON.stringify({ music: parseInt(e.target.value, 10) }) });
+    }, 200);
+  };
+  (async () => {
+    const v = await api("/player/volume");
+    if (v) $("volume-slider").value = v.music;
+  })();
+
+  // ── Search ─────────────────────────────────────
+  async function doSearch() {
+    const q = $("search-input").value.trim();
+    if (!q) return;
+    const res = await api(`/search?q=${encodeURIComponent(q)}&limit=6`);
+    const box = $("search-results");
+    if (!res || !res.results || !res.results.length) {
+      box.innerHTML = '<div class="item"><div class="meta"><div class="t">Tidak ditemukan</div></div></div>';
+      box.style.display = "block";
+      return;
+    }
+    box.innerHTML = res.results
+      .map(
+        (r) => `
+      <div class="item" data-url="${escapeHtml(r.url)}">
+        <img src="${escapeHtml(r.thumbnail || "")}" />
+        <div class="meta">
+          <div class="t">${escapeHtml(r.title)}</div>
+          <div class="c">${escapeHtml(r.channel || "")}</div>
+        </div>
+      </div>`
+      )
+      .join("");
+    box.style.display = "block";
+    box.querySelectorAll(".item[data-url]").forEach((el) => {
+      el.onclick = async () => {
+        await api("/queue/add", { method: "POST", body: JSON.stringify({ youtube_url: el.dataset.url }) });
+        box.style.display = "none";
+        $("search-input").value = "";
+        refreshState();
+      };
+    });
+  }
+  $("search-btn").onclick = doSearch;
+  $("search-input").onkeydown = (e) => { if (e.key === "Enter") doSearch(); };
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#search-results") && !e.target.closest("#search-row")) {
+      $("search-results").style.display = "none";
+    }
+  });
+
+  // ── Tabs ───────────────────────────────────────
+  document.querySelectorAll("#tabs button").forEach((btn) => {
+    btn.onclick = () => {
+      document.querySelectorAll("#tabs button").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+      btn.classList.add("active");
+      $(`panel-${btn.dataset.tab}`).classList.add("active");
+    };
+  });
+
+  // ── TikTok status polling ───────────────────────
+  async function refreshTiktok() {
+    const st = await api("/tiktok/status");
+    if (!st) return;
+    $("tt-dot").classList.toggle("connected", !!st.connected);
+    $("tt-dot-title").classList.toggle("connected", !!st.connected);
+    $("tt-username").textContent = st.connected
+      ? `@${st.username || "?"} - live`
+      : st.username
+      ? `@${st.username} - terputus`
+      : "Belum diatur (isi config.json)";
+    $("tt-toggle").textContent = st.connected ? "Disconnect" : "Connect";
+    $("tt-skipvote").textContent = `Skip vote: ${st.skip_votes || 0}/${st.skip_threshold || "-"}`;
+
+    const reqBox = $("tt-requests");
+    const reqs = (st.recent_requests || []).slice(0, 8);
+    if (!reqs.length) {
+      reqBox.innerHTML = '<div id="tiktok-empty">Belum ada request</div>';
+    } else {
+      reqBox.innerHTML = reqs
+        .map(
+          (r) => `<div class="req-item"><span class="u">${escapeHtml(r.user)}</span> <span class="txt">${
+            r.type === "skip" ? "vote skip" : escapeHtml(r.text || r.song_title || "")
+          }</span></div>`
+        )
+        .join("");
+    }
+  }
+  $("tt-toggle").onclick = async () => {
+    const st = await api("/tiktok/status");
+    if (st && st.connected) await api("/tiktok/disconnect", { method: "POST" });
+    else await api("/tiktok/reconnect", { method: "POST" });
+    refreshTiktok();
+  };
+
+  refreshState();
+  refreshTiktok();
+  setInterval(refreshState, 1500);
+  setInterval(refreshTiktok, 3000);
+})();
+</script>
+</body>
+</html>

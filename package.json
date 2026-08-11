@@ -1,0 +1,22 @@
+{
+  "name": "ytp-node",
+  "version": "4.0.0",
+  "description": "YouTube Audio Player - Node.js port (Express + yt-dlp + mpv IPC + TikTok Live + edge-tts) with a compact Electron desktop player. Ported from the Python/FastAPI original (ShinriShoaku/YTP).",
+  "main": "desktop/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "desktop": "electron ."
+  },
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "msedge-tts": "^2.0.7",
+    "tiktok-live-connector": "^2.4.3",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "electron": "^43.3.0"
+  }
+}
