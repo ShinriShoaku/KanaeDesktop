@@ -406,12 +406,20 @@ input[type=range]::-webkit-slider-thumb{
   position:relative;
   overflow:hidden;
 }
-.live-art{
-  width:100%;height:100%;
-  border-radius:8px;
-  background:
-    linear-gradient(180deg,rgba(255,255,255,.88) 0 35%,#bfc1ba 35%,#555a59 48%,#292d2d 49%,#1e2222 100%);
-  position:relative;overflow:hidden;
+.live-art {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  background: linear-gradient(
+    180deg,
+    #26292e 0 35%,
+    #1c1e22 35%,
+    #15171a 48%,
+    #0e1012 49%,
+    #08090a 100%
+  );
+  position: relative;
+  overflow: hidden;
 }
 .live-art:before{
   content:"";
@@ -432,7 +440,7 @@ input[type=range]::-webkit-slider-thumb{
   color:#fff;
 }
 .live-label{
-  font-size:6px;text-transform:uppercase;letter-spacing:.12em;
+  font-size:9px;text-transform:uppercase;letter-spacing:.12em;
   opacity:.68;
 }
 .live-name{
@@ -586,7 +594,7 @@ input[type=range]::-webkit-slider-thumb{
     <div class="brand">
       <span class="brand-mark"></span>
       <span class="status-dot" id="tt-dot-title"></span>
-      <span>YTPLAYER</span>
+      <span>KANAE PLAYER</span>
     </div>
     <div class="win-btns">
       <button id="btn-pin" title="Selalu di atas">◆</button>
@@ -626,8 +634,8 @@ input[type=range]::-webkit-slider-thumb{
       </div>
       <div id="controls">
         <button id="btn-shuffle" title="Shuffle">⤨</button>
-        <button id="btn-skip" title="Next">⏭</button>
         <button id="btn-play" title="Play/Pause">▶</button>
+        <button id="btn-skip" title="Next">⏭</button>
         <button id="btn-stop" title="Stop">■</button>
       </div>
       

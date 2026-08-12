@@ -1,8 +1,20 @@
 "use strict";
-// tiktok-live-connector is only required when a listener is actually started
-// (lazy-required inside startTiktokListener), so the module - and its
-// dependency tree - isn't loaded into memory for users who never use the
-// TikTok integration.
+/**
+ * TikTok Live integration via Euler Stream (TikTool) Managed WebSocket.
+ * No tiktok-live-connector library needed — pure ws + axios.
+ *
+ * Flow:
+ *   1. Read euler_api_key from config.json
+ *   2. Open WebSocket to wss://api.tik.tools/ws?key=<key>&username=<user>
+ *   3. Receive clean JSON events (chat, gift, like, follow, member)
+ *   4. Process commands (!req, !skip, !queue) and broadcast via SSE
+ *
+ * Setup:
+ *   1. Sign up at https://www.eulerstream.com (free tier: 2,500 req/day + 25 WS)
+ *   2. Create an API key in the dashboard
+ *   3. Paste the key into config.json as "euler_api_key": "your-key-here"
+ */
+
 const EMOTES = require("./tiktokEmotes.json");
 const config = require("./config");
 const { state, addRecentRequest, queueLen } = require("./state");
@@ -10,16 +22,20 @@ const sse = require("./sse");
 const youtube = require("./youtube");
 const playerService = require("./playerService");
 const tts = require("./tts");
+const axios = require("axios");
+const WebSocket = require("ws");
+
+const EULER_WS_URL = "wss://api.tik.tools/ws";
+const EULER_REST_URL = "https://api.eulerstream.com";
 
 function now() {
   return new Date().toISOString().substr(11, 8);
 }
 
 function convertTiktokEmotes(text) {
-  return text.replace(/\[[^\]]{1,20}\]/g, (m) => EMOTES[m.toLowerCase()] || m);
+  return text.replace(/\[\[^\]\]{1,20}\]/g, (m) => EMOTES[m.toLowerCase()] || m);
 }
 
-// ── Defensive field extraction (proto field names vary by lib version) ──
 function extractUser(u) {
   if (!u) return { uid: "unknown", nick: "unknown", avatar: "" };
   const uid = String(u.uniqueId || u.displayId || u.id || u.userId || "").trim() || "unknown";
@@ -134,7 +150,7 @@ async function processTiktokComment(userId, nickname, comment, avatarUrl = "") {
     }
   }
 
-  // ── TTS: read plain comments (not a command, not starting with @ or #) ──
+  // ── TTS: read plain comments ──
   if (comment.startsWith("@")) return;
   if (comment.startsWith("#")) return;
 
@@ -154,7 +170,7 @@ async function processTiktokComment(userId, nickname, comment, avatarUrl = "") {
     type: "chat",
   });
 
-  // fire-and-forget, mirrors the Python daemon thread
+  // fire-and-forget TTS
   tts.speakText(comment).catch((e) => console.error("[TTS] error:", e.message));
 }
 
@@ -165,133 +181,236 @@ function stopTiktokListener() {
     state.tiktokReconnectTimer = null;
   }
   state.tiktokConnected = false;
-  if (state.tiktokConnection) {
-    const conn = state.tiktokConnection;
-    state.tiktokConnection = null;
-    conn.disconnect().catch(() => {});
+  if (state.tiktokWs) {
+    const ws = state.tiktokWs;
+    state.tiktokWs = null;
+    try {
+      ws.terminate();
+    } catch (_) {}
   }
   sse.broadcast("tiktok_status", { connected: false, username: config.getTiktokUsername() });
+}
+
+async function fetchRoomId(username, apiKey) {
+  // Try Euler Stream REST API first, fallback to TikTok HTML scrape
+  try {
+    const res = await axios.get(`${EULER_REST_URL}/webcast/room-id`, {
+      params: { unique_id: username },
+      headers: { Authorization: `Bearer ${apiKey}` },
+      timeout: 10000,
+    });
+    if (res.data && res.data.room_id) return String(res.data.room_id);
+  } catch (e) {
+    console.log(`[TikTok] Euler Stream room-id failed: ${e.message}, trying direct scrape...`);
+  }
+
+  // Fallback: HTML scrape (no API key needed, but fragile)
+  try {
+    const res = await axios.get(`https://www.tiktok.com/@${username}/live`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      },
+      timeout: 10000,
+    });
+    const match = res.data.match(/"roomId":"([0-9]+)"/);
+    if (match) return match[1];
+  } catch (e) {
+    console.log(`[TikTok] Direct scrape failed: ${e.message}`);
+  }
+  return null;
 }
 
 function startTiktokListener() {
   stopTiktokListener();
   state.tiktokStopFlag = false;
 
-  // Lazy-require: only pulls in tiktok-live-connector (and its deps) once a
-  // listener is actually started, instead of at server boot.
-  const { TikTokLiveConnection, WebcastEvent, ControlEvent } = require("tiktok-live-connector");
-
   let retryDelay = 5000;
   const maxDelay = 120000;
+  let pingInterval = null;
 
   const attempt = async () => {
     if (state.tiktokStopFlag) return;
+
     const username = config.getTiktokUsername();
+    const apiKey = config.getEulerApiKey();
+
     if (!username) {
-      console.log("[TikTok] No username set in config.json - listener waiting...");
+      console.log("[TikTok] No username set in config.json — listener waiting...");
       state.tiktokReconnectTimer = setTimeout(attempt, 10000);
       return;
     }
 
-    console.log(`[TikTok] Connecting to @${username}...`);
-    const conn = new TikTokLiveConnection(username);
-    state.tiktokConnection = conn;
+    if (!apiKey) {
+      console.log("[TikTok] No euler_api_key set in config.json — get one free at https://www.eulerstream.com");
+      state.tiktokReconnectTimer = setTimeout(attempt, 30000);
+      return;
+    }
 
-    conn.on(ControlEvent.CONNECTED, () => {
+    console.log(`[TikTok] Connecting to @${username} via Euler Stream...`);
+
+    // Build WebSocket URL — TikTool managed WebSocket
+    // Format: wss://api.tik.tools/ws?api_key=<key>&username=<user>
+    const wsUrl = `${EULER_WS_URL}?api_key=${encodeURIComponent(apiKey)}&username=${encodeURIComponent(username)}`;
+
+    let ws;
+    try {
+      ws = new WebSocket(wsUrl, {
+        headers: {
+          "User-Agent": "KanaeDesktop/4.0",
+        },
+        handshakeTimeout: 15000,
+      });
+    } catch (e) {
+      console.error(`[TikTok] WebSocket creation failed: ${e.message}`);
+      state.tiktokReconnectTimer = setTimeout(attempt, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, maxDelay);
+      return;
+    }
+
+    state.tiktokWs = ws;
+
+    ws.on("open", () => {
       state.tiktokConnected = true;
       state.tiktokError = "";
       const warmup = Number(config.loadConfig().settings?.tiktok_warmup_seconds ?? 5);
       state.tiktokReadyAt = Date.now() / 1000 + warmup;
-      console.log(`[TikTok] Connected to @${username} - ignoring comments for ${warmup}s warmup`);
+      console.log(`[TikTok] Connected to @${username} — ignoring comments for ${warmup}s warmup`);
       sse.broadcast("tiktok_status", { connected: true, username });
-      retryDelay = 5000; // reset backoff on success
+      retryDelay = 5000;
+
+      // Keepalive ping every 25s (some proxies drop idle WS after 30s)
+      pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "ping" }));
+        }
+      }, 25000);
     });
 
-    conn.on(ControlEvent.DISCONNECTED, () => {
+    ws.on("message", (raw) => {
+      if (Date.now() / 1000 < state.tiktokReadyAt) return;
+
+      let msg;
+      try {
+        msg = JSON.parse(raw);
+      } catch (e) {
+        // Some providers send binary or non-JSON — ignore
+        return;
+      }
+
+      // TikTool / Euler Stream event formats (flexible parser)
+      const eventType = msg.event || msg.type || "";
+      const data = msg.data || msg;
+
+      try {
+        switch (eventType.toLowerCase()) {
+          case "chat":
+          case "comment": {
+            const user = extractUser(data.user || data);
+            const text = data.comment || data.message || data.text || "";
+            processTiktokComment(user.uid, user.nick, text, user.avatar).catch((e) =>
+              console.error("[TikTok] comment processing error:", e.message)
+            );
+            break;
+          }
+
+          case "gift": {
+            const user = extractUser(data.user || data);
+            const gname = data.giftName || data.gift?.name || "Gift";
+            const gcount = data.repeatCount || data.count || 1;
+            sse.broadcast("tiktok_chat", {
+              type: "gift",
+              user: user.nick,
+              user_id: user.uid,
+              avatar: user.avatar,
+              detail: `mengirim ${gname} x${gcount}`,
+              time: now(),
+            });
+            break;
+          }
+
+          case "like": {
+            const user = extractUser(data.user || data);
+            const count = data.count || data.likeCount || 1;
+            sse.broadcast("tiktok_chat", {
+              type: "like",
+              user: user.nick,
+              user_id: user.uid,
+              avatar: user.avatar,
+              detail: `mengirim ${count} like`,
+              time: now(),
+            });
+            break;
+          }
+
+          case "follow":
+          case "social": {
+            const user = extractUser(data.user || data);
+            sse.broadcast("tiktok_chat", {
+              type: "follow",
+              user: user.nick,
+              user_id: user.uid,
+              avatar: user.avatar,
+              detail: "mengikuti akun",
+              time: now(),
+            });
+            break;
+          }
+
+          case "member":
+          case "join": {
+            const user = extractUser(data.user || data);
+            sse.broadcast("tiktok_chat", {
+              type: "member",
+              user: user.nick,
+              user_id: user.uid,
+              avatar: user.avatar,
+              detail: "bergabung ke live",
+              time: now(),
+            });
+            break;
+          }
+
+          case "room":
+          case "roominfo": {
+            console.log(`[TikTok] Room info update: ${JSON.stringify(data)}`);
+            break;
+          }
+
+          case "error": {
+            console.error(`[TikTok] Provider error: ${data.message || JSON.stringify(data)}`);
+            break;
+          }
+
+          default:
+            // Silently ignore unknown events
+            break;
+        }
+      } catch (e) {
+        console.error("[TikTok] Event handler error:", e.message);
+      }
+    });
+
+    ws.on("error", (err) => {
+      state.tiktokError = String(err.message || err);
+      console.error(`[TikTok] WebSocket error: ${state.tiktokError}`);
+    });
+
+    ws.on("close", (code, reason) => {
       state.tiktokConnected = false;
-      console.log(`[TikTok] Disconnected from @${username}`);
+      if (pingInterval) {
+        clearInterval(pingInterval);
+        pingInterval = null;
+      }
+      const reasonStr = reason ? reason.toString() : `code ${code}`;
+      console.log(`[TikTok] Disconnected from @${username} (${reasonStr})`);
       sse.broadcast("tiktok_status", { connected: false, username });
-      if (state.tiktokConnection === conn && !state.tiktokStopFlag) {
+
+      if (state.tiktokWs === ws && !state.tiktokStopFlag) {
         console.log(`[TikTok] Reconnecting in ${retryDelay / 1000}s...`);
         state.tiktokReconnectTimer = setTimeout(attempt, retryDelay);
         retryDelay = Math.min(retryDelay * 2, maxDelay);
       }
     });
-
-    conn.on(ControlEvent.ERROR, (err) => {
-      state.tiktokError = String(err?.message || err);
-      console.error(`[TikTok] Error: ${state.tiktokError}`);
-    });
-
-    conn.on(WebcastEvent.CHAT, async (data) => {
-      if (Date.now() / 1000 < state.tiktokReadyAt) return;
-      const { uid, nick, avatar } = extractUser(data.user);
-      const text = data.comment ?? data.content ?? "";
-      try {
-        await processTiktokComment(uid, nick, text, avatar);
-      } catch (e) {
-        console.error("[TikTok] comment processing error:", e.message);
-      }
-    });
-
-    conn.on(WebcastEvent.GIFT, (data) => {
-      try {
-        const { uid, nick, avatar } = extractUser(data.user);
-        const gname = data.giftName || data.gift?.name || "Gift";
-        const gcount = data.repeatCount || 1;
-        sse.broadcast("tiktok_chat", {
-          type: "gift",
-          user: nick,
-          user_id: uid,
-          avatar,
-          detail: `mengirim ${gname} x${gcount}`,
-          time: now(),
-        });
-      } catch (e) {
-        console.error("[TikTok] Gift event error:", e.message);
-      }
-    });
-
-    conn.on(WebcastEvent.LIKE, (data) => {
-      try {
-        const { uid, nick, avatar } = extractUser(data.user);
-        const count = data.count || 1;
-        sse.broadcast("tiktok_chat", {
-          type: "like",
-          user: nick,
-          user_id: uid,
-          avatar,
-          detail: `mengirim ${count} like`,
-          time: now(),
-        });
-      } catch (e) {
-        console.error("[TikTok] Like event error:", e.message);
-      }
-    });
-
-    conn.on(WebcastEvent.FOLLOW, (data) => {
-      try {
-        const { uid, nick, avatar } = extractUser(data.user);
-        sse.broadcast("tiktok_chat", { type: "follow", user: nick, user_id: uid, avatar, detail: "mengikuti akun", time: now() });
-      } catch (e) {
-        console.error("[TikTok] Follow event error:", e.message);
-      }
-    });
-
-    try {
-      await conn.connect();
-    } catch (e) {
-      state.tiktokError = String(e.message || e);
-      console.error(`[TikTok] Connect error: ${state.tiktokError}`);
-      state.tiktokConnected = false;
-      sse.broadcast("tiktok_status", { connected: false, username, error: state.tiktokError });
-
-      if (state.tiktokStopFlag) return;
-      console.log(`[TikTok] Reconnecting in ${retryDelay / 1000}s...`);
-      state.tiktokReconnectTimer = setTimeout(attempt, retryDelay);
-      retryDelay = Math.min(retryDelay * 2, maxDelay);
-      return;
-    }
   };
 
   attempt();

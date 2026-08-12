@@ -1,8 +1,6 @@
 "use strict";
 /**
  * Config & bad-word filter helpers.
- * Ported from: _load_config, _get_commands, _get_tiktok_username, _get_settings,
- *              _load_badwords, _save_badwords, _contains_badword (main.py)
  */
 const fs = require("fs");
 const path = require("path");
@@ -13,6 +11,7 @@ let _configMtime = 0.0;
 
 const DEFAULT_CONFIG = {
   tiktok_username: "",
+  euler_api_key: "",
   commands: {
     request: ["#req", "#request", "#lagu", "#song", "#minta"],
     skip: ["#skip", "#next", "#lewat", "#ganti"],
@@ -49,7 +48,6 @@ function _deepMerge(base, override) {
   return out;
 }
 
-/** Load config.json with mtime-based caching (mirrors the Python implementation). */
 function loadConfig() {
   try {
     const stat = fs.statSync(paths.CONFIG_FILE);
@@ -69,7 +67,6 @@ function loadConfig() {
   }
 }
 
-/** Overwrite config.json fully, preserving existing _comment / _obs_ keys. */
 function saveConfigMerged(body) {
   const existing = loadConfig();
 
@@ -92,7 +89,6 @@ function saveConfigMerged(body) {
   return merged;
 }
 
-/** PUT-style partial save used by /overlay/config. */
 function saveRawConfig(cfg) {
   fs.writeFileSync(paths.CONFIG_FILE, JSON.stringify(cfg, null, 2), "utf-8");
   _configCache = cfg;
@@ -108,8 +104,13 @@ function getTiktokUsername() {
   const cfg = loadConfig();
   let u = (cfg.tiktok_username || "").trim();
   if (u.startsWith("@")) u = u.slice(1);
-  if (u.startsWith("masukan-username")) return ""; // placeholder value
+  if (u.startsWith("masukan-username")) return "";
   return u;
+}
+
+function getEulerApiKey() {
+  const cfg = loadConfig();
+  return (cfg.euler_api_key || "").trim();
 }
 
 function getSettings() {
@@ -123,16 +124,12 @@ function getTtsConfig() {
 }
 
 // ── Bad word filter ──────────────────────────────────────────
-// Cached like config.json: only re-read from disk when the file's mtime
-// changes, and pre-compile a single regex instead of looping over every
-// word on every chat message (this runs on every TikTok comment, so it
-// matters under load).
 let _badwordsCache = null;
 let _badwordsMtime = 0;
 let _badwordsRegex = null;
 
 function _escapeRegex(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\$&");
 }
 
 function _loadBadwordsFresh() {
@@ -164,8 +161,6 @@ function loadBadwords() {
 function saveBadwords(words) {
   const cleaned = [...new Set(words.map((w) => String(w).trim().toLowerCase()).filter(Boolean))];
   fs.writeFileSync(paths.BADWORDS_FILE, cleaned.join("\n") + "\n", "utf-8");
-  // Invalidate cache immediately so the new list is used right away, without
-  // waiting for the next mtime-based reload.
   _badwordsCache = cleaned;
   _badwordsMtime = fs.statSync(paths.BADWORDS_FILE).mtimeMs;
   _badwordsRegex = cleaned.length ? new RegExp(cleaned.map(_escapeRegex).join("|"), "i") : null;
@@ -174,7 +169,7 @@ function saveBadwords(words) {
 
 function containsBadword(text) {
   if (!text) return false;
-  _loadBadwordsFresh(); // ensures _badwordsRegex is up to date (cheap stat() check)
+  _loadBadwordsFresh();
   if (!_badwordsRegex) return false;
   return _badwordsRegex.test(text);
 }
@@ -186,6 +181,7 @@ module.exports = {
   saveRawConfig,
   getCommands,
   getTiktokUsername,
+  getEulerApiKey,
   getSettings,
   getTtsConfig,
   loadBadwords,
