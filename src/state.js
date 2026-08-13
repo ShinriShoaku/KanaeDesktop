@@ -105,6 +105,8 @@ const state = {
   tiktokReadyAt: 0, // epoch seconds; comments before this are ignored (warmup)
   tiktokStopFlag: true,
   tiktokConnection: null,
+  tiktokWs: null, // active WebSocket handle when tiktok_provider = "tiktool"
+  tiktokConnector: null, // active TikTokLiveConnection instance when tiktok_provider = "connector"
   tiktokReconnectTimer: null,
 
   // subtitle broadcaster guard

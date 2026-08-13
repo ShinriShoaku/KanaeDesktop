@@ -24,17 +24,18 @@ router.post("/search/add-top", async (req, res) => {
   if (!q) return res.status(422).json({ detail: "query param 'q' is required" });
   let results;
   try {
-    results = await youtube.searchYoutube(q, 1);
+    results = await youtube.searchYoutube(q, 2);
   } catch (e) {
     return res.status(500).json({ detail: `Search error: ${e.message}` });
   }
   if (!results.length) return res.status(404).json({ detail: "No results found" });
-  const top = results[0];
-  let info;
+  let info, top;
   try {
-    info = await youtube.getInfo(top.url);
+    const picked = await youtube.findPlayableInfo(results);
+    info = picked.info;
+    top = picked.candidate;
   } catch (e) {
-    return res.status(500).json({ detail: `Info fetch error: ${e.message}` });
+    return res.status(500).json({ detail: `No playable result found (all candidates failed, e.g. age-restricted)`, failures: e.failures });
   }
   const song = playerService.makeSong(info, top.url);
   const result = await playerService.addOrAutoplay(song);
@@ -81,8 +82,7 @@ router.get("/subtitles", async (req, res) => {
       subtitles: {},
     };
     if (usedLang) {
-      const resp = await fetch(subMap[usedLang].url);
-      const raw = await resp.json();
+      const raw = await youtube.fetchSubtitleJson(subMap[usedLang].url);
       const events = youtube.parseJson3Subtitle(raw);
       result.subtitles = { type: subMap[usedLang].type, language: usedLang, event_count: events.length, events };
     }
@@ -137,8 +137,7 @@ router.get("/subtitles/current", async (req, res) => {
       subtitles: {},
     };
     if (!usedLang) return res.json(result);
-    const resp = await fetch(subMap[usedLang].url);
-    const raw = await resp.json();
+    const raw = await youtube.fetchSubtitleJson(subMap[usedLang].url);
     const events = youtube.parseJson3Subtitle(raw);
     result.subtitles = { type: subMap[usedLang].type, language: usedLang, event_count: events.length, events };
     res.json(result);

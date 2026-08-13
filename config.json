@@ -1,6 +1,8 @@
 {
-  "tiktok_username": "@choco_rokku",
-  "euler_api_key": "",
+  "tiktok_username": "@shinri_shoaku",
+  "tiktok_provider": "tiktool",
+  "euler_api_key": ".",
+  "eulerstream_api_key": "tk_3d3f18415b3888f575840e999e98ebce057e8257c38d26a1",
   "commands": {
     "request": [
       "#req",
@@ -30,7 +32,7 @@
     "enable_skip_vote": true,
     "skip_vote_threshold": 5,
     "tiktok_warmup_seconds": 5,
-    "music_volume": 150
+    "music_volume": 113
   },
   "tts": {
     "enabled": false,

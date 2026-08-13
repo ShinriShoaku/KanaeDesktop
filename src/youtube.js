@@ -125,6 +125,52 @@ async function getAudioStreamUrl(url) {
   return info.url || info.webpage_url || url;
 }
 
+/**
+ * Try getInfo() on each search result in order until one succeeds.
+ * Used so that a single unplayable result (age-restricted, private,
+ * region-locked, removed, etc.) doesn't fail the whole request — it
+ * just falls through to the next candidate from the same search.
+ * Returns { info, candidate } on success, or throws if all fail.
+ */
+async function findPlayableInfo(results, { maxAttempts = 5 } = {}) {
+  const attempts = results.slice(0, maxAttempts);
+  const failures = [];
+  for (const candidate of attempts) {
+    try {
+      const info = await getInfo(candidate.url);
+      return { info, candidate };
+    } catch (e) {
+      console.log(`[YouTube] Skipping unplayable result "${candidate.title}": ${e.message}`);
+      failures.push({ title: candidate.title, url: candidate.url, error: e.message });
+    }
+  }
+  const err = new Error(`All ${attempts.length} result(s) were unplayable`);
+  err.failures = failures;
+  throw err;
+}
+
+// User-Agent used for fetching signed subtitle URLs — without a real
+// browser-like UA, YouTube sometimes returns an HTML block/consent page
+// instead of the expected JSON, which fails JSON.parse with a confusing
+// "Unexpected token '<'" error.
+const SUBTITLE_FETCH_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+};
+
+/** Fetch a subtitle URL and safely parse it as JSON, with a clear error if it isn't. */
+async function fetchSubtitleJson(url) {
+  const resp = await fetch(url, { headers: SUBTITLE_FETCH_HEADERS, signal: AbortSignal.timeout(10000) });
+  if (!resp.ok) {
+    throw new Error(`Subtitle server responded with status ${resp.status}`);
+  }
+  const contentType = resp.headers.get("content-type") || "";
+  if (!contentType.includes("json")) {
+    throw new Error(`Subtitle URL returned non-JSON response (content-type: ${contentType || "unknown"}) — likely an expired/blocked link`);
+  }
+  return resp.json();
+}
+
 function msToTimecode(ms) {
   const total = Math.max(0, Math.floor(ms));
   const rem = total % 1000;
@@ -218,8 +264,7 @@ async function fetchSubtitleEventsForUrl(url) {
     }
     if (!usedLang) usedLang = Object.keys(subMap)[0];
 
-    const resp = await fetch(subMap[usedLang].url, { signal: AbortSignal.timeout(10000) });
-    const raw = await resp.json();
+    const raw = await fetchSubtitleJson(subMap[usedLang].url);
     return parseJson3Subtitle(raw);
   } catch (e) {
     console.error("[Subtitle] Fetch error:", e.message);
@@ -231,9 +276,11 @@ module.exports = {
   searchYoutube,
   getInfo,
   getAudioStreamUrl,
+  findPlayableInfo,
   msToTimecode,
   parseJson3Subtitle,
   fetchSubtitleMap,
+  fetchSubtitleJson,
   pickLanguage,
   fetchSubtitleEventsForUrl,
 };

@@ -11,7 +11,9 @@ let _configMtime = 0.0;
 
 const DEFAULT_CONFIG = {
   tiktok_username: "",
-  euler_api_key: "",
+  tiktok_provider: "tiktool", // "tiktool" (api.tik.tools) | "connector" (tiktok-live-connector via Euler Stream)
+  euler_api_key: "", // tik.tools API key — used when tiktok_provider = "tiktool"
+  eulerstream_api_key: "", // eulerstream.com API key — OPTIONAL, used when tiktok_provider = "connector" (works anonymously without it, just with a lower rate limit)
   commands: {
     request: ["#req", "#request", "#lagu", "#song", "#minta"],
     skip: ["#skip", "#next", "#lewat", "#ganti"],
@@ -113,6 +115,17 @@ function getEulerApiKey() {
   return (cfg.euler_api_key || "").trim();
 }
 
+function getTiktokProvider() {
+  const cfg = loadConfig();
+  const p = (cfg.tiktok_provider || "tiktool").trim().toLowerCase();
+  return p === "connector" ? "connector" : "tiktool";
+}
+
+function getEulerStreamApiKey() {
+  const cfg = loadConfig();
+  return (cfg.eulerstream_api_key || "").trim();
+}
+
 function getSettings() {
   const cfg = loadConfig();
   return { ...DEFAULT_CONFIG.settings, ...(cfg.settings || {}) };
@@ -182,6 +195,8 @@ module.exports = {
   getCommands,
   getTiktokUsername,
   getEulerApiKey,
+  getTiktokProvider,
+  getEulerStreamApiKey,
   getSettings,
   getTtsConfig,
   loadBadwords,

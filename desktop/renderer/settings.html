@@ -117,6 +117,30 @@
           <input class="cfg-input" id="cfg-tiktok_username" type="text" placeholder="nama_akun" style="flex:1;max-width:none">
           <button class="btn btn-secondary btn-sm" id="btnSaveUsername">Simpan</button>
         </div>
+
+        <div class="cfg-row" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+          <span class="cfg-label">Provider koneksi<small>penyedia sinyal koneksi live TikTok</small></span>
+          <select class="cfg-select" id="cfg-tiktok_provider" style="max-width:none;flex:1">
+            <option value="tiktool">TikTool (api.tik.tools)</option>
+            <option value="connector">tiktok-live-connector (Euler Stream)</option>
+          </select>
+        </div>
+
+        <div class="cfg-row" id="row-euler_api_key">
+          <span class="cfg-label">API key TikTool<small>wajib &bull; daftar gratis di tik.tools</small></span>
+          <input class="cfg-input" id="cfg-euler_api_key" type="text" placeholder="Tempel API key dari tik.tools" style="flex:1;max-width:none">
+          <a class="obs-link" href="https://tik.tools" target="_blank" style="text-decoration:none">Daftar &#8599;</a>
+        </div>
+
+        <div class="cfg-row" id="row-eulerstream_api_key">
+          <span class="cfg-label">API key Euler Stream<small>opsional &bull; kosong = anonymous (limit lebih ketat)</small></span>
+          <input class="cfg-input" id="cfg-eulerstream_api_key" type="text" placeholder="(opsional) Tempel API key dari eulerstream.com" style="flex:1;max-width:none">
+          <a class="obs-link" href="https://www.eulerstream.com" target="_blank" style="text-decoration:none">Daftar &#8599;</a>
+        </div>
+
+        <p style="font-size:11px;color:var(--text-dim);line-height:1.6;margin:6px 0 0">
+          TikTool dan Euler Stream adalah dua penyedia terpisah dengan API key masing-masing yang tidak bisa saling dipakai — pastikan key yang diisi sesuai provider yang dipilih di atas.
+        </p>
       </div>
 
       <div class="cfg-section">
@@ -361,12 +385,25 @@
     } catch (e) { showToast("cfgToast", "Gagal: " + e.message, false); }
   };
 
+  // ── Provider selection (TikTool vs tiktok-live-connector) ──
+  function updateProviderRows() {
+    const provider = getVal("cfg-tiktok_provider");
+    $("row-euler_api_key").style.display = provider === "tiktool" ? "flex" : "none";
+    $("row-eulerstream_api_key").style.display = provider === "connector" ? "flex" : "none";
+  }
+  $("cfg-tiktok_provider").onchange = updateProviderRows;
+
   // ── Load / Save settings ─────────────────
   async function loadSettings() {
     try {
       const cfg = await api("GET", "/config");
       setVal("cfg-tiktok_username", (cfg.tiktok_username || "").replace(/^@/, ""));
       savedUsername = getVal("cfg-tiktok_username");
+
+      setVal("cfg-tiktok_provider", cfg.tiktok_provider === "connector" ? "connector" : "tiktool");
+      setVal("cfg-euler_api_key", cfg.euler_api_key || "");
+      setVal("cfg-eulerstream_api_key", cfg.eulerstream_api_key || "");
+      updateProviderRows();
 
       const cmds = cfg.commands || {};
       renderTags("tags-cmd-request", cmds.request || []);
@@ -419,6 +456,9 @@
     const username = getVal("cfg-tiktok_username").replace(/^@/, "");
     const payload = {
       tiktok_username: "@" + username,
+      tiktok_provider: getVal("cfg-tiktok_provider"),
+      euler_api_key: getVal("cfg-euler_api_key").trim(),
+      eulerstream_api_key: getVal("cfg-eulerstream_api_key").trim(),
       commands: {
         request: getTags("tags-cmd-request"), skip: getTags("tags-cmd-skip"),
         stop: getTags("tags-cmd-stop"), queue: getTags("tags-cmd-queue"),

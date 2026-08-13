@@ -1,18 +1,31 @@
 "use strict";
 /**
- * TikTok Live integration via Euler Stream (TikTool) Managed WebSocket.
- * No tiktok-live-connector library needed — pure ws + axios.
+ * TikTok Live integration — supports TWO interchangeable providers,
+ * selectable via config.json's "tiktok_provider" field:
  *
- * Flow:
- *   1. Read euler_api_key from config.json
- *   2. Open WebSocket to wss://api.tik.tools/ws?key=<key>&username=<user>
- *   3. Receive clean JSON events (chat, gift, like, follow, member)
- *   4. Process commands (!req, !skip, !queue) and broadcast via SSE
+ *   "tiktool"   (default) — TikTool Managed WebSocket (api.tik.tools).
+ *                Pure ws + axios, no extra library. Requires an API key
+ *                from https://tik.tools (config: "euler_api_key").
+ *
+ *   "connector" — the community library tiktok-live-connector
+ *                (github.com/zerodytrash/TikTok-Live-Connector), which
+ *                signs requests through Euler Stream (eulerstream.com).
+ *                Works WITHOUT an API key (anonymous, shared rate limit),
+ *                or with one for a higher limit (config: "eulerstream_api_key").
+ *
+ * NOTE: TikTool (tik.tools) and Euler Stream (eulerstream.com) are two
+ * separate, unrelated services with their own separate API keys — a key
+ * from one will NOT work with the other. Match the key to the provider
+ * you select.
+ *
+ * Both providers funnel into the same processTiktokComment() handler and
+ * the same tiktok_chat / tiktok_status SSE events, so the rest of the app
+ * doesn't need to know which one is active.
  *
  * Setup:
- *   1. Sign up at https://www.eulerstream.com (free tier: 2,500 req/day + 25 WS)
- *   2. Create an API key in the dashboard
- *   3. Paste the key into config.json as "euler_api_key": "your-key-here"
+ *   "tiktool":   sign up at https://tik.tools, paste key into euler_api_key
+ *   "connector": (optional) sign up at https://www.eulerstream.com,
+ *                paste key into eulerstream_api_key
  */
 
 const EMOTES = require("./tiktokEmotes.json");
@@ -24,8 +37,9 @@ const playerService = require("./playerService");
 const tts = require("./tts");
 const axios = require("axios");
 const WebSocket = require("ws");
+const { TikTokLiveConnection, WebcastEvent } = require("tiktok-live-connector");
 
-const EULER_WS_URL = "wss://api.tik.tools/ws";
+const EULER_WS_URL = "wss://api.tik.tools";
 const EULER_REST_URL = "https://api.eulerstream.com";
 
 function now() {
@@ -109,14 +123,30 @@ async function processTiktokComment(userId, nickname, comment, avatarUrl = "") {
       sse.broadcast("tiktok_request", { user: nickname, query, status: "searching" });
 
       try {
-        const results = await youtube.searchYoutube(query, 1);
+        const results = await youtube.searchYoutube(query, 2);
         if (!results.length) {
           sse.broadcast("tiktok_request", { user: nickname, query, status: "not_found" });
           if (state.recentRequests[0]) state.recentRequests[0].status = "not_found";
           return;
         }
-        const top = results[0];
-        const info = await youtube.getInfo(top.url);
+
+        let info, top;
+        try {
+          const picked = await youtube.findPlayableInfo(results);
+          info = picked.info;
+          top = picked.candidate;
+        } catch (e) {
+          console.error(`[TikTok] All results unplayable for "${query}":`, e.failures || e.message);
+          sse.broadcast("tiktok_request", {
+            user: nickname,
+            query,
+            status: "not_found",
+            error: "Semua hasil tidak bisa diputar (mungkin dibatasi umur/wilayah)",
+          });
+          if (state.recentRequests[0]) state.recentRequests[0].status = "not_found";
+          return;
+        }
+
         const song = playerService.makeSong(info, top.url);
         song.requested_by = nickname;
         await playerService.addOrAutoplay(song);
@@ -181,6 +211,7 @@ function stopTiktokListener() {
     state.tiktokReconnectTimer = null;
   }
   state.tiktokConnected = false;
+
   if (state.tiktokWs) {
     const ws = state.tiktokWs;
     state.tiktokWs = null;
@@ -188,6 +219,15 @@ function stopTiktokListener() {
       ws.terminate();
     } catch (_) {}
   }
+
+  if (state.tiktokConnector) {
+    const conn = state.tiktokConnector;
+    state.tiktokConnector = null;
+    try {
+      conn.disconnect();
+    } catch (_) {}
+  }
+
   sse.broadcast("tiktok_status", { connected: false, username: config.getTiktokUsername() });
 }
 
@@ -220,10 +260,7 @@ async function fetchRoomId(username, apiKey) {
   return null;
 }
 
-function startTiktokListener() {
-  stopTiktokListener();
-  state.tiktokStopFlag = false;
-
+function startTiktoolListener() {
   let retryDelay = 5000;
   const maxDelay = 120000;
   let pingInterval = null;
@@ -241,16 +278,17 @@ function startTiktokListener() {
     }
 
     if (!apiKey) {
-      console.log("[TikTok] No euler_api_key set in config.json — get one free at https://www.eulerstream.com");
+      console.log("[TikTok] No euler_api_key set in config.json — get one free at https://tik.tools");
       state.tiktokReconnectTimer = setTimeout(attempt, 30000);
       return;
     }
 
-    console.log(`[TikTok] Connecting to @${username} via Euler Stream...`);
+    console.log(`[TikTok] Connecting to @${username} via TikTool...`);
 
     // Build WebSocket URL — TikTool managed WebSocket
-    // Format: wss://api.tik.tools/ws?api_key=<key>&username=<user>
-    const wsUrl = `${EULER_WS_URL}?api_key=${encodeURIComponent(apiKey)}&username=${encodeURIComponent(username)}`;
+    // Format: wss://api.tik.tools?uniqueId=<user>&apiKey=<key>
+    const uniqueId = username.replace(/^@/, "");
+    const wsUrl = `${EULER_WS_URL}?uniqueId=${encodeURIComponent(uniqueId)}&apiKey=${encodeURIComponent(apiKey)}`;
 
     let ws;
     try {
@@ -414,7 +452,164 @@ function startTiktokListener() {
   };
 
   attempt();
-  console.log(`[TikTok] Listener started for @${config.getTiktokUsername()}`);
+  console.log(`[TikTok] Listener started for @${config.getTiktokUsername()} (provider: tiktool)`);
+}
+
+/**
+ * Backend 2: tiktok-live-connector (github.com/zerodytrash/TikTok-Live-Connector).
+ * Signs through Euler Stream. Works anonymously (no key) with a shared,
+ * stricter rate limit, or with an eulerstream_api_key for a higher limit.
+ */
+function startConnectorListener() {
+  let retryDelay = 5000;
+  const maxDelay = 120000;
+
+  const attempt = async () => {
+    if (state.tiktokStopFlag) return;
+
+    const username = config.getTiktokUsername();
+    if (!username) {
+      console.log("[TikTok] No username set in config.json — listener waiting...");
+      state.tiktokReconnectTimer = setTimeout(attempt, 10000);
+      return;
+    }
+
+    const eulerStreamKey = config.getEulerStreamApiKey();
+    console.log(
+      `[TikTok] Connecting to @${username} via tiktok-live-connector (Euler Stream${
+        eulerStreamKey ? "" : ", anonymous — no eulerstream_api_key set"
+      })...`
+    );
+
+    const connOptions = {};
+    if (eulerStreamKey) connOptions.signApiKey = eulerStreamKey;
+
+    const conn = new TikTokLiveConnection(username, connOptions);
+    state.tiktokConnector = conn;
+
+    conn.on(WebcastEvent.CHAT, (data) => {
+      if (Date.now() / 1000 < state.tiktokReadyAt) return;
+      const user = extractUser(data.user);
+      const text = data.content || "";
+      processTiktokComment(user.uid, user.nick, text, user.avatar).catch((e) =>
+        console.error("[TikTok] comment processing error:", e.message)
+      );
+    });
+
+    conn.on(WebcastEvent.GIFT, (data) => {
+      if (Date.now() / 1000 < state.tiktokReadyAt) return;
+      const user = extractUser(data.user);
+      const gname = data.gift?.name || "Gift";
+      const gcount = data.repeatCount || 1;
+      sse.broadcast("tiktok_chat", {
+        type: "gift",
+        user: user.nick,
+        user_id: user.uid,
+        avatar: user.avatar,
+        detail: `mengirim ${gname} x${gcount}`,
+        time: now(),
+      });
+    });
+
+    conn.on(WebcastEvent.LIKE, (data) => {
+      if (Date.now() / 1000 < state.tiktokReadyAt) return;
+      const user = extractUser(data.user);
+      const count = data.count || 1;
+      sse.broadcast("tiktok_chat", {
+        type: "like",
+        user: user.nick,
+        user_id: user.uid,
+        avatar: user.avatar,
+        detail: `mengirim ${count} like`,
+        time: now(),
+      });
+    });
+
+    conn.on(WebcastEvent.FOLLOW, (data) => {
+      if (Date.now() / 1000 < state.tiktokReadyAt) return;
+      const user = extractUser(data.user);
+      sse.broadcast("tiktok_chat", {
+        type: "follow",
+        user: user.nick,
+        user_id: user.uid,
+        avatar: user.avatar,
+        detail: "mengikuti akun",
+        time: now(),
+      });
+    });
+
+    conn.on(WebcastEvent.MEMBER, (data) => {
+      if (Date.now() / 1000 < state.tiktokReadyAt) return;
+      const user = extractUser(data.user);
+      sse.broadcast("tiktok_chat", {
+        type: "member",
+        user: user.nick,
+        user_id: user.uid,
+        avatar: user.avatar,
+        detail: "bergabung ke live",
+        time: now(),
+      });
+    });
+
+    conn.on("streamEnd", () => {
+      console.log(`[TikTok] Livestream @${username} ended.`);
+    });
+
+    conn.on("error", (err) => {
+      state.tiktokError = String(err?.message || err);
+      console.error(`[TikTok] Connector error: ${state.tiktokError}`);
+    });
+
+    conn.on("disconnected", () => {
+      state.tiktokConnected = false;
+      console.log(`[TikTok] Disconnected from @${username}`);
+      sse.broadcast("tiktok_status", { connected: false, username });
+
+      if (state.tiktokConnector === conn && !state.tiktokStopFlag) {
+        console.log(`[TikTok] Reconnecting in ${retryDelay / 1000}s...`);
+        state.tiktokReconnectTimer = setTimeout(attempt, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, maxDelay);
+      }
+    });
+
+    try {
+      const roomInfo = await conn.connect();
+      state.tiktokConnected = true;
+      state.tiktokError = "";
+      const warmup = Number(config.loadConfig().settings?.tiktok_warmup_seconds ?? 5);
+      state.tiktokReadyAt = Date.now() / 1000 + warmup;
+      console.log(`[TikTok] Connected to @${username} (roomId=${roomInfo.roomId}) — ignoring comments for ${warmup}s warmup`);
+      sse.broadcast("tiktok_status", { connected: true, username });
+      retryDelay = 5000;
+    } catch (e) {
+      console.error(`[TikTok] Connect failed: ${e.message}`);
+      state.tiktokError = String(e.message || e);
+      state.tiktokConnector = null;
+      if (!state.tiktokStopFlag) {
+        console.log(`[TikTok] Reconnecting in ${retryDelay / 1000}s...`);
+        state.tiktokReconnectTimer = setTimeout(attempt, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, maxDelay);
+      }
+    }
+  };
+
+  attempt();
+  console.log(`[TikTok] Listener started for @${config.getTiktokUsername()} (provider: connector)`);
+}
+
+/**
+ * Dispatcher — picks the backend based on config.json's "tiktok_provider".
+ */
+function startTiktokListener() {
+  stopTiktokListener();
+  state.tiktokStopFlag = false;
+
+  const provider = config.getTiktokProvider();
+  if (provider === "connector") {
+    startConnectorListener();
+  } else {
+    startTiktoolListener();
+  }
 }
 
 module.exports = { processTiktokComment, convertTiktokEmotes, startTiktokListener, stopTiktokListener };
