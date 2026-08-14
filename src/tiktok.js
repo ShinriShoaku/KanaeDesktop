@@ -30,10 +30,11 @@
 
 const EMOTES = require("./tiktokEmotes.json");
 const config = require("./config");
-const { state, addRecentRequest, queueLen } = require("./state");
+const { state, addRecentRequest, queueLen, saveQueue } = require("./state");
 const sse = require("./sse");
 const youtube = require("./youtube");
 const playerService = require("./playerService");
+const mpv = require("./mpv");
 const tts = require("./tts");
 const axios = require("axios");
 const WebSocket = require("ws");
@@ -44,6 +45,27 @@ const EULER_REST_URL = "https://api.eulerstream.com";
 
 function now() {
   return new Date().toISOString().substr(11, 8);
+}
+
+/**
+ * Finds which command prefix (if any) a comment matches, requiring a real
+ * word boundary (exact match, or prefix followed by a space) rather than a
+ * bare startsWith(). Without this, a short prefix like "#req" wrongly
+ * swallows a longer one like "#request" whenever it happens to come first
+ * in the array - e.g. "#request Bohemian Rhapsody" would match "#req" and
+ * chop the query down to "uest Bohemian Rhapsody", breaking the search.
+ * Sorting longest-first also means this is safe regardless of the order
+ * prefixes are listed/added in config.json (e.g. custom prefixes from the
+ * Settings UI).
+ */
+function matchCommandPrefix(commentLower, prefixes) {
+  const sorted = [...(prefixes || [])].sort((a, b) => b.length - a.length);
+  for (const prefix of sorted) {
+    if (commentLower === prefix || commentLower.startsWith(prefix + " ")) {
+      return prefix;
+    }
+  }
+  return null;
 }
 
 function convertTiktokEmotes(text) {
@@ -70,106 +92,121 @@ async function processTiktokComment(userId, nickname, comment, avatarUrl = "") {
   const cmds = config.getCommands();
   const settings = config.getSettings();
 
+  const adminUsername = config.getTiktokUsername();
+  const isAdmin =
+    adminUsername &&
+    (userId.toLowerCase() === adminUsername.toLowerCase() || nickname.toLowerCase() === adminUsername.toLowerCase());
+
+  // ── Stop command (admin only) — stops playback and clears the queue ──
+  const stopPrefix = matchCommandPrefix(commentLower, cmds.stop);
+  if (stopPrefix) {
+    if (!isAdmin) return; // silently ignore from non-admins, same as other admin-only actions
+    console.log(`[TikTok] Admin stop by @${nickname} - stopping playback and clearing queue`);
+    saveQueue([]);
+    state.currentSong = null;
+    state.isPlaying = false;
+    state.isPaused = false;
+    state.skipVotes = new Set();
+    await mpv.killServerPlayer();
+    addRecentRequest({ type: "stop", user: nickname, text: comment, time: now() });
+    sse.broadcast("player_stopped", {});
+    playerService.broadcastPlayerState();
+    return;
+  }
+
   // ── Skip command ──
-  for (const prefix of cmds.skip) {
-    if (commentLower === prefix || commentLower.startsWith(prefix + " ")) {
-      const adminUsername = config.getTiktokUsername();
-      const isAdmin =
-        adminUsername &&
-        (userId.toLowerCase() === adminUsername.toLowerCase() || nickname.toLowerCase() === adminUsername.toLowerCase());
-
-      if (isAdmin) {
-        console.log(`[TikTok] Admin skip by @${nickname} - skipping instantly`);
-        sse.broadcast("skip_vote", {
-          user: nickname,
-          votes: settings.skip_vote_threshold,
-          threshold: settings.skip_vote_threshold,
-          admin: true,
-        });
-        addRecentRequest({ type: "skip", user: nickname, text: comment, time: now() });
-        await playerService.doSkip(nickname);
-        return;
-      }
-
-      state.skipVotes.add(userId);
-      const threshold = settings.skip_vote_threshold;
-      const voteCount = state.skipVotes.size;
-      console.log(`[TikTok] Skip vote from @${nickname} (${voteCount}/${threshold})`);
-
-      sse.broadcast("skip_vote", { user: nickname, votes: voteCount, threshold });
+  const skipPrefix = matchCommandPrefix(commentLower, cmds.skip);
+  if (skipPrefix) {
+    if (isAdmin) {
+      console.log(`[TikTok] Admin skip by @${nickname} - skipping instantly`);
+      sse.broadcast("skip_vote", {
+        user: nickname,
+        votes: settings.skip_vote_threshold,
+        threshold: settings.skip_vote_threshold,
+        admin: true,
+      });
       addRecentRequest({ type: "skip", user: nickname, text: comment, time: now() });
-
-      if (voteCount >= threshold) {
-        await playerService.doSkip(nickname);
-      }
+      await playerService.doSkip(nickname);
       return;
     }
+
+    state.skipVotes.add(userId);
+    const threshold = settings.skip_vote_threshold;
+    const voteCount = state.skipVotes.size;
+    console.log(`[TikTok] Skip vote from @${nickname} (${voteCount}/${threshold})`);
+
+    sse.broadcast("skip_vote", { user: nickname, votes: voteCount, threshold });
+    addRecentRequest({ type: "skip", user: nickname, text: comment, time: now() });
+
+    if (voteCount >= threshold) {
+      await playerService.doSkip(nickname);
+    }
+    return;
   }
 
   // ── Request command ──
-  for (const prefix of cmds.request) {
-    if (commentLower.startsWith(prefix)) {
-      const query = comment.slice(prefix.length).trim();
-      if (!query) return;
-      const maxPerUser = settings.max_queue_per_user;
-      const count = state.userRequestCount[userId] || 0;
-      if (count >= maxPerUser) {
-        sse.broadcast("request_rejected", { user: nickname, reason: `Max ${maxPerUser} requests per user`, query });
+  const requestPrefix = matchCommandPrefix(commentLower, cmds.request);
+  if (requestPrefix) {
+    const query = comment.slice(requestPrefix.length).trim();
+    if (!query) return;
+    const maxPerUser = settings.max_queue_per_user;
+    const count = state.userRequestCount[userId] || 0;
+    if (count >= maxPerUser) {
+      sse.broadcast("request_rejected", { user: nickname, reason: `Max ${maxPerUser} requests per user`, query });
+      return;
+    }
+
+    console.log(`[TikTok] Request from @${nickname}: ${query}`);
+    addRecentRequest({ type: "request", user: nickname, text: query, status: "searching", time: now() });
+    sse.broadcast("tiktok_request", { user: nickname, query, status: "searching" });
+
+    try {
+      const results = await youtube.searchYoutube(query, 2);
+      if (!results.length) {
+        sse.broadcast("tiktok_request", { user: nickname, query, status: "not_found" });
+        if (state.recentRequests[0]) state.recentRequests[0].status = "not_found";
         return;
       }
 
-      console.log(`[TikTok] Request from @${nickname}: ${query}`);
-      addRecentRequest({ type: "request", user: nickname, text: query, status: "searching", time: now() });
-      sse.broadcast("tiktok_request", { user: nickname, query, status: "searching" });
-
+      let info, top;
       try {
-        const results = await youtube.searchYoutube(query, 2);
-        if (!results.length) {
-          sse.broadcast("tiktok_request", { user: nickname, query, status: "not_found" });
-          if (state.recentRequests[0]) state.recentRequests[0].status = "not_found";
-          return;
-        }
-
-        let info, top;
-        try {
-          const picked = await youtube.findPlayableInfo(results);
-          info = picked.info;
-          top = picked.candidate;
-        } catch (e) {
-          console.error(`[TikTok] All results unplayable for "${query}":`, e.failures || e.message);
-          sse.broadcast("tiktok_request", {
-            user: nickname,
-            query,
-            status: "not_found",
-            error: "Semua hasil tidak bisa diputar (mungkin dibatasi umur/wilayah)",
-          });
-          if (state.recentRequests[0]) state.recentRequests[0].status = "not_found";
-          return;
-        }
-
-        const song = playerService.makeSong(info, top.url);
-        song.requested_by = nickname;
-        await playerService.addOrAutoplay(song);
-        state.userRequestCount[userId] = count + 1;
-        if (state.recentRequests[0]) {
-          state.recentRequests[0].status = "queued";
-          state.recentRequests[0].song_title = song.title;
-        }
-
+        const picked = await youtube.findPlayableInfo(results);
+        info = picked.info;
+        top = picked.candidate;
+      } catch (e) {
+        console.error(`[TikTok] All results unplayable for "${query}":`, e.failures || e.message);
         sse.broadcast("tiktok_request", {
           user: nickname,
           query,
-          status: "queued",
-          song_title: song.title,
-          thumbnail: song.thumbnail,
+          status: "not_found",
+          error: "Semua hasil tidak bisa diputar (mungkin dibatasi umur/wilayah)",
         });
-        playerService.broadcastPlayerState();
-      } catch (e) {
-        console.error("[TikTok] Request error:", e.message);
-        sse.broadcast("tiktok_request", { user: nickname, query, status: "error", error: e.message });
+        if (state.recentRequests[0]) state.recentRequests[0].status = "not_found";
+        return;
       }
-      return;
+
+      const song = playerService.makeSong(info, top.url);
+      song.requested_by = nickname;
+      await playerService.addOrAutoplay(song);
+      state.userRequestCount[userId] = count + 1;
+      if (state.recentRequests[0]) {
+        state.recentRequests[0].status = "queued";
+        state.recentRequests[0].song_title = song.title;
+      }
+
+      sse.broadcast("tiktok_request", {
+        user: nickname,
+        query,
+        status: "queued",
+        song_title: song.title,
+        thumbnail: song.thumbnail,
+      });
+      playerService.broadcastPlayerState();
+    } catch (e) {
+      console.error("[TikTok] Request error:", e.message);
+      sse.broadcast("tiktok_request", { user: nickname, query, status: "error", error: e.message });
     }
+    return;
   }
 
   // ── Queue info command ──

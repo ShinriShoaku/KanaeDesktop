@@ -15,15 +15,22 @@
  * expire quickly and must stay fresh.
  */
 const { execFile } = require("child_process");
-
-const YTDLP_BIN = process.env.YTDLP_PATH || "yt-dlp";
+const ytdlpManager = require("./ytdlpManager");
 
 function run(args, { timeout = 30000, maxBuffer = 1024 * 1024 * 32 } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(YTDLP_BIN, args, { timeout, maxBuffer }, (err, stdout, stderr) => {
+    // Resolved fresh on every call (not cached at module-load time) so this
+    // always uses whichever binary ytdlpManager last downloaded/updated to,
+    // even if that happens after youtube.js was first required.
+    const bin = ytdlpManager.getYtdlpBin();
+    execFile(bin, args, { timeout, maxBuffer }, (err, stdout, stderr) => {
       if (err) {
         if (err.code === "ENOENT") {
-          return reject(new Error("yt-dlp not found on PATH. Install it: pip install yt-dlp (or see https://github.com/yt-dlp/yt-dlp)."));
+          return reject(
+            new Error(
+              `yt-dlp tidak ditemukan (${bin}). App seharusnya mendownload otomatis saat startup - cek koneksi internet lalu restart, atau install manual: pip install yt-dlp`
+            )
+          );
         }
         return reject(new Error(stderr?.trim() || err.message));
       }

@@ -8,6 +8,7 @@ const config = require("./config");
 const mpv = require("./mpv");
 const tiktok = require("./tiktok");
 const versionMod = require("./version");
+const ytdlpManager = require("./ytdlpManager");
 const playerService = require("./playerService");
 const { state, flushQueueSync } = require("./state");
 
@@ -44,6 +45,11 @@ async function main() {
   state.musicVolume = Number.isFinite(parseInt(musicRaw, 10)) ? Math.max(0, Math.min(150, parseInt(musicRaw, 10))) : 100;
   const ttsPct = cfg.tts?.volume_pct;
   state.ttsVolumePct = Number.isFinite(parseInt(ttsPct, 10)) ? Math.max(-50, Math.min(100, parseInt(ttsPct, 10))) : 0;
+
+  // Download yt-dlp on first run, or update it if a newer release is out.
+  // Best-effort: if this fails (offline, GitHub down, etc.) startup still
+  // continues using whatever yt-dlp is already available (bundled or PATH).
+  await ytdlpManager.ensureYtdlp();
 
   const found = mpv.detectPlayer();
   if (found) {
