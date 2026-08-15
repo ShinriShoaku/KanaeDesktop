@@ -1,0 +1,63 @@
+diff --git a/src/cookies.js b/src/cookies.js
+--- a/src/cookies.js
++++ b/src/cookies.js
+@@ -87,4 +87,26 @@
+   return [];
+ }
+ 
+-module.exports = { getCookieArgs, DEFAULT_COOKIES_FILE };
++// Default yt-dlp player_client priority as of 2026 leans on the `web`
++// client when cookies are present (to use the logged-in session) - but
++// YouTube now force-routes `web`/`web_safari`/`mweb` to SABR-only formats
++// with no direct HTTPS URL, so those get dropped entirely and format
++// selection fails with "Requested format is not available"
++// (https://github.com/yt-dlp/yt-dlp/issues/12482). `tv` and `android`
++// still hand back plain HTTPS URLs without needing a PO token, so those
++// are forced instead, unless overridden via YTDLP_PLAYER_CLIENT.
++const DEFAULT_PLAYER_CLIENT = "tv,android";
++
++/**
++ * Returns ["--extractor-args", "youtube:player_client=..."] to keep yt-dlp
++ * off the SABR-only web clients. Override with env YTDLP_PLAYER_CLIENT
++ * (comma-separated, same syntax yt-dlp itself takes) if YouTube's rollout
++ * shifts again and a different client combo works better.
++ */
++function getPlayerClientArgs() {
++  const clients = (process.env.YTDLP_PLAYER_CLIENT || DEFAULT_PLAYER_CLIENT).trim();
++  if (!clients) return [];
++  return ["--extractor-args", `youtube:player_client=${clients}`];
++}
++
++module.exports = { getCookieArgs, getPlayerClientArgs, DEFAULT_COOKIES_FILE };
+diff --git a/src/youtube.js b/src/youtube.js
+--- a/src/youtube.js
++++ b/src/youtube.js
+@@ -29,9 +29,10 @@
+       .catch(() => {}) // waitUntilReady() never rejects, but be defensive
+       .then(() => {
+         const bin = ytdlpManager.getYtdlpBin();
+-        // Auto-loaded cookies (file or browser) - see src/cookies.js.
++        // Auto-loaded cookies (file or browser) + client override to dodge
++        // YouTube's SABR-only web clients - see src/cookies.js.
+         // Prepended so it never disturbs `target` below (still the last arg).
+-        const fullArgs = [...cookies.getCookieArgs(), ...args];
++        const fullArgs = [...cookies.getCookieArgs(), ...cookies.getPlayerClientArgs(), ...args];
+         const startedAt = Date.now();
+         // Trim the URL for logs so this stays readable; the full args are
+         // available in the log call itself if someone needs to see flags.
+diff --git a/src/mpv.js b/src/mpv.js
+--- a/src/mpv.js
++++ b/src/mpv.js
+@@ -1073,9 +1073,11 @@
+       );
+ 
+       const ytdlpArgs = [
+-        // Auto-loaded cookies (file or browser) - see src/cookies.js.
++        // Auto-loaded cookies (file or browser) + client override to dodge
++        // YouTube's SABR-only web clients - see src/cookies.js.
+         // Prepended first so nothing below has to know it's there.
+         ...cookies.getCookieArgs(),
++        ...cookies.getPlayerClientArgs(),
+ 
+         "--no-warnings",
+         "--quiet",

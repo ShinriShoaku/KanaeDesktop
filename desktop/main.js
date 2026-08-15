@@ -16,6 +16,7 @@ const { app, BrowserWindow, ipcMain, screen } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
+const youtubeCookies = require("./youtubeCookies");
 
 // Chromium's Wayland/Vulkan GPU path (color-management, image-transfer-function
 // warnings, "not compatible with Vulkan" for --ozone-platform=wayland) is still
@@ -188,6 +189,19 @@ ipcMain.handle("win:toggle-always-on-top", (event) => {
 ipcMain.handle("win:get-api-base", () => API_BASE);
 ipcMain.on("win:open", (event, name) => openChildWindow(name));
 
+// ── YouTube login (cookies) IPC ─────────────────────────────────
+// Opens a real login window; cookies.txt gets (re)synced automatically
+// as soon as it's closed. Status is pushed back to whichever window asked,
+// so e.g. settings.html can show "Tersimpan (42 cookie)" / an error.
+ipcMain.on("youtube:login", (event) => {
+  const requester = BrowserWindow.fromWebContents(event.sender);
+  youtubeCookies.openLoginWindow(win, (status) => {
+    if (requester && !requester.isDestroyed()) {
+      requester.webContents.send("youtube:login-status", status);
+    }
+  });
+});
+
 app.whenReady().then(async () => {
   startBackend();
   try {
@@ -196,6 +210,14 @@ app.whenReady().then(async () => {
     console.error("[Desktop] " + e.message);
   }
   createWindow();
+
+  // Silently re-sync cookies.txt from whatever was persisted in the
+  // youtube-login session partition on a PREVIOUS run - Electron keeps
+  // persist:* partitions on disk, so this means the user only ever has to
+  // click "Login ke YouTube" once, not on every app launch.
+  youtubeCookies.syncCookiesToFile().catch((e) => {
+    console.warn(`[YouTube Login] Sync awal gagal (mungkin belum pernah login): ${e.message}`);
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

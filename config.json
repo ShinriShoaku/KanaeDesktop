@@ -32,7 +32,7 @@
     "enable_skip_vote": true,
     "skip_vote_threshold": 5,
     "tiktok_warmup_seconds": 5,
-    "music_volume": 95
+    "music_volume": 109
   },
   "tts": {
     "enabled": false,

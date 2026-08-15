@@ -144,6 +144,17 @@
       </div>
 
       <div class="cfg-section">
+        <div class="cfg-section-title">Login YouTube (Cookies)</div>
+        <p style="font-size:11px;color:var(--text-dim);line-height:1.6;margin:0 0 8px">
+          Login sekali di sini supaya yt-dlp pakai cookies akun kamu — biasanya jauh lebih jarang kena 403 dibanding tanpa login. Cookies disimpan otomatis (Netscape cookies.txt) dan dipakai lagi setiap kali app dibuka, tidak perlu login ulang tiap kali.
+        </p>
+        <div class="cfg-row" style="gap:8px;flex-wrap:wrap">
+          <button class="btn btn-success btn-sm" id="btnYoutubeLogin">Login ke YouTube</button>
+          <span id="youtubeLoginStatus" style="font-size:11px;color:var(--text-dim)"></span>
+        </div>
+      </div>
+
+      <div class="cfg-section">
         <div class="cfg-section-title">Command Keywords</div>
         <div class="cfg-row"><span class="cfg-label">Request lagu<small>mis. #req #lagu</small></span><div class="tag-input-wrap" id="tags-cmd-request"></div></div>
         <div class="cfg-row"><span class="cfg-label">Skip / next<small>mis. #skip #next</small></span><div class="tag-input-wrap" id="tags-cmd-skip"></div></div>
@@ -290,6 +301,21 @@
 
   $("btn-min").onclick = () => window.desktop && window.desktop.minimize();
   $("btn-close").onclick = () => window.desktop && window.desktop.close();
+
+  if (window.desktop && window.desktop.loginYoutube) {
+    $("btnYoutubeLogin").onclick = () => {
+      $("youtubeLoginStatus").textContent = "Membuka jendela login...";
+      window.desktop.loginYoutube();
+    };
+    window.desktop.onYoutubeLoginStatus((status) => {
+      $("youtubeLoginStatus").textContent = status.ok
+        ? `Tersimpan (${status.count} cookie) - ${new Date().toLocaleTimeString()}`
+        : `Gagal: ${status.error}`;
+    });
+  } else {
+    $("btnYoutubeLogin").disabled = true;
+    $("youtubeLoginStatus").textContent = "Hanya tersedia di desktop app (Electron).";
+  }
 
   // ── Tabs ─────────────────────────────────
   document.querySelectorAll("#tabs button").forEach((btn) => {

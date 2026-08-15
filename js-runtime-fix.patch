@@ -1,0 +1,50 @@
+diff --git a/src/cookies.js b/src/cookies.js
+--- a/src/cookies.js
++++ b/src/cookies.js
+@@ -109,4 +109,22 @@
+   return ["--extractor-args", `youtube:player_client=${clients}`];
+ }
+ 
+-module.exports = { getCookieArgs, getPlayerClientArgs, DEFAULT_COOKIES_FILE };
++// yt-dlp needs an external JS runtime (Deno/Node/Bun/QuickJS) to solve
++// YouTube's signature/"n" challenges - without one, https format URLs
++// can't be de-obfuscated and get silently dropped, which then LOOKS like
++// the SABR-only-formats issue (same "missing a URL" symptom) but isn't -
++// see https://github.com/yt-dlp/yt-dlp/wiki/EJS. Deno is yt-dlp's
++// recommended/sandboxed choice and is auto-detected with zero flags if
++// it's on PATH, but Node is what's actually guaranteed to be present here
++// (KanaeDesktop is a Node/Electron app), so that's the explicit default -
++// override with YTDLP_JS_RUNTIME (same syntax as yt-dlp's own
++// --js-runtimes, e.g. "deno" or "node:/custom/path/to/node").
++const DEFAULT_JS_RUNTIME = "node";
++
++function getJsRuntimeArgs() {
++  const runtime = (process.env.YTDLP_JS_RUNTIME || DEFAULT_JS_RUNTIME).trim();
++  if (!runtime) return [];
++  return ["--js-runtimes", runtime];
++}
++
++module.exports = { getCookieArgs, getPlayerClientArgs, getJsRuntimeArgs, DEFAULT_COOKIES_FILE };
+diff --git a/src/youtube.js b/src/youtube.js
+--- a/src/youtube.js
++++ b/src/youtube.js
+@@ -32,7 +32,7 @@
+         // Auto-loaded cookies (file or browser) + client override to dodge
+         // YouTube's SABR-only web clients - see src/cookies.js.
+         // Prepended so it never disturbs `target` below (still the last arg).
+-        const fullArgs = [...cookies.getCookieArgs(), ...cookies.getPlayerClientArgs(), ...args];
++        const fullArgs = [...cookies.getCookieArgs(), ...cookies.getPlayerClientArgs(), ...cookies.getJsRuntimeArgs(), ...args];
+         const startedAt = Date.now();
+         // Trim the URL for logs so this stays readable; the full args are
+         // available in the log call itself if someone needs to see flags.
+diff --git a/src/mpv.js b/src/mpv.js
+--- a/src/mpv.js
++++ b/src/mpv.js
+@@ -1078,6 +1078,7 @@
+         // Prepended first so nothing below has to know it's there.
+         ...cookies.getCookieArgs(),
+         ...cookies.getPlayerClientArgs(),
++        ...cookies.getJsRuntimeArgs(),
+ 
+         "--no-warnings",
+         "--quiet",

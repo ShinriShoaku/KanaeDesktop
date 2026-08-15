@@ -5,3 +5,4 @@ npm-debug.log
 dist/
 .config.json
 bin/
+cookies.txt

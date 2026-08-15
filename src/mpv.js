@@ -36,6 +36,7 @@ const path = require("path");
 const paths = require("./paths");
 const { state } = require("./state");
 const ytdlpManager = require("./ytdlpManager");
+const cookies = require("./cookies");
 
 // ─────────────────────────────────────────────────────────────
 // PLAYER DETECTION
@@ -1072,12 +1073,18 @@ async function playServerAudio(
       );
 
       const ytdlpArgs = [
+        // Auto-loaded cookies (file or browser) + client override to dodge
+        // YouTube's SABR-only web clients - see src/cookies.js.
+        // Prepended first so nothing below has to know it's there.
+        ...cookies.getCookieArgs(),
+        ...cookies.getPlayerClientArgs(),
+        ...cookies.getJsRuntimeArgs(),
+
         "--no-warnings",
         "--quiet",
         "--no-progress",
-        "--extractor-args",
-        "youtube:player_client=tv_simply,default,mweb,android,web_embedded",
-
+       // "--extractor-args",
+        //"youtube:player_client=android,web_safari",
         // Prefer audio-only formats.
         "-f",
         "ba/ba*/bestaudio/b/best",

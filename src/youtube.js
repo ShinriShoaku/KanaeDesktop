@@ -16,6 +16,7 @@
  */
 const { execFile } = require("child_process");
 const ytdlpManager = require("./ytdlpManager");
+const cookies = require("./cookies");
 
 function run(args, { timeout = 30000, maxBuffer = 1024 * 1024 * 32 } = {}) {
   return new Promise((resolve, reject) => {
@@ -28,12 +29,16 @@ function run(args, { timeout = 30000, maxBuffer = 1024 * 1024 * 32 } = {}) {
       .catch(() => {}) // waitUntilReady() never rejects, but be defensive
       .then(() => {
         const bin = ytdlpManager.getYtdlpBin();
+        // Auto-loaded cookies (file or browser) + client override to dodge
+        // YouTube's SABR-only web clients - see src/cookies.js.
+        // Prepended so it never disturbs `target` below (still the last arg).
+        const fullArgs = [...cookies.getCookieArgs(), ...cookies.getPlayerClientArgs(), ...cookies.getJsRuntimeArgs(), ...args];
         const startedAt = Date.now();
         // Trim the URL for logs so this stays readable; the full args are
         // available in the log call itself if someone needs to see flags.
         const target = args[args.length - 1];
         console.log(`[yt-dlp] -> ${target}`);
-        execFile(bin, args, { timeout, maxBuffer }, (err, stdout, stderr) => {
+        execFile(bin, fullArgs, { timeout, maxBuffer }, (err, stdout, stderr) => {
           const elapsedS = ((Date.now() - startedAt) / 1000).toFixed(1);
           if (err) {
             if (err.code === "ENOENT") {
