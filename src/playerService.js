@@ -177,15 +177,21 @@ function startMpvWatcher() {
     tick += 1;
     if (tick % 200 === 0) state.userRequestCount = {};
 
-    if (!state.mpvProc) {
-      if (state.playerKilled) state.playerKilled = false;
-      return;
-    }
-    if (state.mpvProc.exitCode === null && !state.mpvProc.killed) return; // still running
     if (state.playerKilled) {
+      // An intentional kill (skip/stop/new playback starting) also fires
+      // mpv's exit handler and sets mpvExited - clear both flags together
+      // so this tick doesn't also try to advance the queue on top of
+      // whatever triggered the kill.
       state.playerKilled = false;
+      state.mpvExited = false;
       return;
     }
+
+    // Nothing to do until mpv.js's exit handler flags a finished song -
+    // relying on state.mpvProc here doesn't work because that handler
+    // already nulls it out before this tick ever runs.
+    if (!state.mpvExited) return;
+    state.mpvExited = false;
 
     // mpv died naturally -> advance
     state.skipVotes = new Set();

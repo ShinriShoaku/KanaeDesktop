@@ -91,6 +91,12 @@ const state = {
   mpvProc: null, // child_process handle
   serverPlayer: null, // resolved binary path/name
   playerKilled: false,
+  // Set by mpv.js's process "exit" handler the moment mpv stops (naturally
+  // finishing a song or crashing). state.mpvProc itself gets nulled out in
+  // that same handler, so the background watcher in playerService.js can't
+  // rely on inspecting mpvProc/exitCode after the fact - it watches this
+  // flag instead and clears it once it has advanced to the next song.
+  mpvExited: false,
   ytdlpProc: null,
   // skip votes / per-user throttling
   skipVotes: new Set(),

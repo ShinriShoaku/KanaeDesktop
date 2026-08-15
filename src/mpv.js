@@ -1278,6 +1278,13 @@ async function playServerAudio(
         ) {
           state.mpvProc =
             null;
+
+          // Tell the watcher a song just ended (naturally or otherwise) so
+          // it can advance the queue. Must be set here, not left for the
+          // watcher to infer from state.mpvProc, because state.mpvProc is
+          // already null by the time the watcher's next tick runs.
+          state.mpvExited =
+            true;
         }
 
         if (
