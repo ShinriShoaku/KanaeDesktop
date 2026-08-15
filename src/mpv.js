@@ -1075,18 +1075,12 @@ async function playServerAudio(
         "--no-warnings",
         "--quiet",
         "--no-progress",
-
-        // Do not use android/android_vr.
-        //
-        // YouTube currently enforces PO tokens on GVS for
-        // several clients. tv_simply currently avoids that
-        // requirement.
         "--extractor-args",
-        "youtube:player_client=tv_simply",
+        "youtube:player_client=tv_simply,default,mweb,android,web_embedded",
 
         // Prefer audio-only formats.
         "-f",
-        "bestaudio/best",
+        "ba/ba*/bestaudio/b/best",
 
         // Force raw media stream to stdout.
         "-o",
