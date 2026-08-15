@@ -6,13 +6,20 @@ const { state } = require("./state");
 /**
  * Spawn a background task that broadcasts subtitle SSE events timed to playback.
  * Mirrors _start_subtitle_broadcaster (main.py).
+ *
+ * `preloadedSubMap` (optional): if the caller already fetched a subMap for
+ * this song in the same yt-dlp call that resolved the stream URL (see
+ * mpv.playServerAudio / youtube.resolvePlayback), pass it here so this
+ * doesn't make its own redundant yt-dlp call just for subtitles.
  */
-function startSubtitleBroadcaster(song, songStartTime) {
+function startSubtitleBroadcaster(song, songStartTime, preloadedSubMap = null) {
   const songId = song.id;
   state.subtitleSongId = songId;
 
   (async () => {
-    const events = await youtube.fetchSubtitleEventsForUrl(song.youtube_url);
+    const events = preloadedSubMap
+      ? await youtube.subtitleEventsFromMap(preloadedSubMap)
+      : await youtube.fetchSubtitleEventsForUrl(song.youtube_url);
     if (!events.length) return;
 
     for (const evt of events) {

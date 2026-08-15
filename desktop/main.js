@@ -17,6 +17,14 @@ const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 
+// Chromium's Wayland/Vulkan GPU path (color-management, image-transfer-function
+// warnings, "not compatible with Vulkan" for --ozone-platform=wayland) is still
+// rough around the edges in this Electron version. Forcing the X11 backend on
+// Linux avoids all of that noise; XWayland handles it transparently on Wayland
+// desktops (GNOME/KDE etc.) so there's no visible difference for the user,
+// just a cleaner terminal. No-op on Windows/macOS (Ozone is Linux/Chromium-only).
+
+
 const PORT = parseInt(process.env.PORT || "8000", 10);
 const API_BASE = `http://localhost:${PORT}`;
 
@@ -38,6 +46,11 @@ function startBackend() {
     env: { ...process.env, PORT: String(PORT) },
     stdio: "inherit",
     windowsHide: true,
+    // Own process group on POSIX (Linux/macOS) so shutdownBackend() below
+    // can reliably force-kill the WHOLE tree - server.js AND any mpv/ffplay
+    // it spawned - in one shot via a negative-PID kill, instead of relying
+    // on server.js's own SIGTERM handler to clean mpv up in time.
+    detached: process.platform !== "win32",
   });
   backendProc.on("exit", (code) => {
     console.log(`[Desktop] Backend process exited (code ${code})`);
@@ -189,19 +202,100 @@ app.whenReady().then(async () => {
   });
 });
 
-function shutdownBackend() {
-  if (backendProc) {
-    try {
-      backendProc.kill();
-    } catch (e) {}
-    backendProc = null;
+/**
+ * Stops mpv/ffplay and the backend server when the app closes.
+ *
+ * Two steps, in order:
+ *   1. Best-effort GRACEFUL stop: POST /player/stop, the same endpoint the
+ *      UI's own Stop button uses. This lets mpv exit cleanly via its own
+ *      IPC "quit" command (src/mpv.js killServerPlayer()) instead of being
+ *      killed mid-buffer. Short timeout - must never hold up app close.
+ *   2. GUARANTEED force-kill of the entire process TREE (server.js + any
+ *      mpv/ffplay it spawned), regardless of whether step 1 worked.
+ *
+ * Step 2 is the actual fix for mpv lingering after the app closes ("mpv
+ * nyangkut"): previously this only called backendProc.kill() on the
+ * direct child (server.js) and relied on ITS OWN SIGTERM handler to clean
+ * up mpv in turn. That's not reliable enough on its own:
+ *   - On Windows, Node's child.kill() terminates the target process
+ *     immediately at the OS level and its SIGTERM/SIGINT handlers never
+ *     run at all - so mpv.killServerPlayer() inside server.js was simply
+ *     never reached, and mpv (a grandchild of Electron) kept running as
+ *     an orphaned process in the background indefinitely.
+ *   - Even where signal handlers DO run, Electron has no way to "wait"
+ *     for a grandchild process's cleanup to finish before it exits.
+ * Killing the whole process tree/group directly removes that dependency
+ * entirely - mpv gets killed no matter what server.js's own shutdown code
+ * did or didn't manage to do in time.
+ */
+async function shutdownBackend() {
+  if (!backendProc) return;
+  const proc = backendProc;
+  backendProc = null;
+
+  console.log("[Desktop] Menutup aplikasi - menghentikan player + backend...");
+
+  try {
+    await Promise.race([
+      fetch(`${API_BASE}/player/stop`, { method: "POST" }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1500)),
+    ]);
+  } catch (e) {
+    // fine - the force-kill below is the actual guarantee, this was just
+    // a best-effort attempt at a cleaner mpv exit.
   }
+
+  try {
+    if (process.platform === "win32") {
+      // /T = kill the whole process tree (server.js + mpv/ffplay), /F = force.
+      require("child_process").exec(`taskkill /pid ${proc.pid} /T /F`, () => {});
+    } else {
+      // Negative PID = kill the entire process group (works because
+      // startBackend() spawned this with detached:true on POSIX).
+      process.kill(-proc.pid, "SIGTERM");
+      setTimeout(() => {
+        try {
+          process.kill(-proc.pid, "SIGKILL");
+        } catch (e) {
+          /* group already gone */
+        }
+      }, 1000);
+    }
+  } catch (e) {
+    try {
+      proc.kill();
+    } catch (e2) {
+      /* nothing more we can do */
+    }
+  }
+
+  console.log("[Desktop] Backend + player dihentikan.");
 }
 
 app.on("window-all-closed", () => {
-  shutdownBackend();
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", shutdownBackend);
-process.on("exit", shutdownBackend);
+let _quitting = false;
+app.on("before-quit", (e) => {
+  if (_quitting || !backendProc) return; // already handled / nothing running
+  e.preventDefault();
+  _quitting = true;
+  shutdownBackend().finally(() => app.quit());
+});
+
+// Last-resort synchronous safety net (e.g. an unexpected crash that skips
+// the async before-quit path above) - can't await here, so this just fires
+// the force-kill and hopes for the best rather than the graceful HTTP step.
+process.on("exit", () => {
+  if (!backendProc) return;
+  try {
+    if (process.platform === "win32") {
+      require("child_process").execSync(`taskkill /pid ${backendProc.pid} /T /F`, { stdio: "ignore" });
+    } else {
+      process.kill(-backendProc.pid, "SIGKILL");
+    }
+  } catch (e) {
+    /* best effort */
+  }
+});

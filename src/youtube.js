@@ -19,23 +19,48 @@ const ytdlpManager = require("./ytdlpManager");
 
 function run(args, { timeout = 30000, maxBuffer = 1024 * 1024 * 32 } = {}) {
   return new Promise((resolve, reject) => {
-    // Resolved fresh on every call (not cached at module-load time) so this
-    // always uses whichever binary ytdlpManager last downloaded/updated to,
-    // even if that happens after youtube.js was first required.
-    const bin = ytdlpManager.getYtdlpBin();
-    execFile(bin, args, { timeout, maxBuffer }, (err, stdout, stderr) => {
-      if (err) {
-        if (err.code === "ENOENT") {
-          return reject(
-            new Error(
-              `yt-dlp tidak ditemukan (${bin}). App seharusnya mendownload otomatis saat startup - cek koneksi internet lalu restart, atau install manual: pip install yt-dlp`
-            )
-          );
-        }
-        return reject(new Error(stderr?.trim() || err.message));
-      }
-      resolve(stdout);
-    });
+    // Wait for ytdlpManager's first-run download / update check to finish
+    // before actually invoking the binary, so a request that comes in
+    // while it's still downloading just waits a moment instead of failing
+    // with ENOENT. This resolves instantly once a binary is ready.
+    ytdlpManager
+      .waitUntilReady()
+      .catch(() => {}) // waitUntilReady() never rejects, but be defensive
+      .then(() => {
+        const bin = ytdlpManager.getYtdlpBin();
+        const startedAt = Date.now();
+        // Trim the URL for logs so this stays readable; the full args are
+        // available in the log call itself if someone needs to see flags.
+        const target = args[args.length - 1];
+        console.log(`[yt-dlp] -> ${target}`);
+        execFile(bin, args, { timeout, maxBuffer }, (err, stdout, stderr) => {
+          const elapsedS = ((Date.now() - startedAt) / 1000).toFixed(1);
+          if (err) {
+            if (err.code === "ENOENT") {
+              console.error(`[yt-dlp] Gagal (${elapsedS}s): binary tidak ditemukan (${bin})`);
+              return reject(
+                new Error(
+                  `yt-dlp tidak ditemukan (${bin}). App seharusnya mendownload otomatis saat startup - cek koneksi internet lalu restart, atau install manual: pip install yt-dlp`
+                )
+              );
+            }
+            const msg = stderr?.trim() || err.message;
+            const isRateLimited = /429|Too Many Requests|rate.?limit/i.test(msg);
+            if (isRateLimited) {
+              console.error(
+                `[yt-dlp] Kena RATE LIMIT dari YouTube (429) setelah ${elapsedS}s untuk: ${target}\n` +
+                  `  -> Ini dari YouTube sendiri, biasanya karena kebanyakan request dalam waktu singkat. ` +
+                  `Coba lagi sebentar, atau kurangi jumlah request bersamaan.`
+              );
+            } else {
+              console.error(`[yt-dlp] Gagal (${elapsedS}s) untuk ${target}:\n  ${msg}`);
+            }
+            return reject(new Error(msg));
+          }
+          console.log(`[yt-dlp] <- OK (${elapsedS}s): ${target}`);
+          resolve(stdout);
+        });
+      });
   });
 }
 
@@ -224,6 +249,10 @@ async function fetchSubtitleMap(url) {
     url,
   ]);
   const info = JSON.parse(stdout);
+  return { subMap: extractSubMap(info), info };
+}
+
+function extractSubMap(info) {
   const subMap = {};
   for (const [langCode, entries] of Object.entries(info.subtitles || {})) {
     const hit = (entries || []).find((e) => e.ext === "json3");
@@ -234,7 +263,54 @@ async function fetchSubtitleMap(url) {
     const hit = (entries || []).find((e) => e.ext === "json3");
     if (hit) subMap[langCode] = { type: "auto", url: hit.url };
   }
-  return { subMap, info };
+  return subMap;
+}
+
+function extractBestAudioUrl(info) {
+  for (const fmt of info.formats || []) {
+    const hasAudio = fmt.acodec && fmt.acodec !== "none";
+    const noVideo = !fmt.vcodec || fmt.vcodec === "none";
+    if (hasAudio && noVideo) return fmt.url;
+  }
+  return info.url || info.webpage_url || null;
+}
+
+/**
+ * Resolves everything needed to actually START playback in ONE yt-dlp
+ * invocation: the direct audio stream URL AND the subtitle map together,
+ * instead of two separate full info-extractions (which is what happened
+ * before - getAudioStreamUrl() and the subtitle broadcaster's own
+ * fetchSubtitleMap() call each did their own `-J` request for the same
+ * video back-to-back). Halving the yt-dlp calls on the playback hot path
+ * both makes "grab the link so it can play" noticeably faster, and matters
+ * a lot for avoiding YouTube rate limits (HTTP 429) - fewer requests per
+ * song means fewer chances to get throttled, and a throttled subtitle
+ * fetch can no longer take down the actual audio stream resolution since
+ * they're now the same request instead of a second one riding right behind it.
+ * Used by mpv.js's playServerAudio(). getAudioStreamUrl()/fetchSubtitleMap()
+ * are kept as-is for the manual web UI endpoints (routes/youtube.js).
+ */
+async function resolvePlayback(url) {
+  const stdout = await run([
+    "--quiet",
+    "--no-warnings",
+    "-f",
+    "bestaudio[ext=m4a]/bestaudio/best",
+    "--write-subs",
+    "--write-auto-subs",
+    "--sub-format",
+    "json3",
+    "--sub-langs",
+    "all",
+    "-J",
+    url,
+  ]);
+  const info = JSON.parse(stdout);
+  return {
+    streamUrl: extractBestAudioUrl(info) || url,
+    subMap: extractSubMap(info),
+    info,
+  };
 }
 
 function pickLanguage(subMap, preferred) {
@@ -252,7 +328,23 @@ function pickLanguage(subMap, preferred) {
 async function fetchSubtitleEventsForUrl(url) {
   try {
     const { subMap } = await fetchSubtitleMap(url);
-    if (!Object.keys(subMap).length) return [];
+    return await subtitleEventsFromMap(subMap);
+  } catch (e) {
+    console.error("[Subtitle] Fetch error:", e.message);
+    return [];
+  }
+}
+
+/**
+ * Same as fetchSubtitleEventsForUrl() but takes a subMap that's already
+ * been fetched (e.g. from resolvePlayback()) instead of making its own
+ * yt-dlp call - used on the playback hot path to avoid a redundant
+ * extraction. Never throws; returns [] on any failure (best-effort,
+ * missing subtitles should never take down playback).
+ */
+async function subtitleEventsFromMap(subMap) {
+  try {
+    if (!subMap || !Object.keys(subMap).length) return [];
     let usedLang = null;
     for (const pref of ["id", "en", "en-US", "en-GB", "en-orig"]) {
       if (subMap[pref]) {
@@ -283,6 +375,7 @@ module.exports = {
   searchYoutube,
   getInfo,
   getAudioStreamUrl,
+  resolvePlayback,
   findPlayableInfo,
   msToTimecode,
   parseJson3Subtitle,
@@ -290,4 +383,5 @@ module.exports = {
   fetchSubtitleJson,
   pickLanguage,
   fetchSubtitleEventsForUrl,
+  subtitleEventsFromMap,
 };

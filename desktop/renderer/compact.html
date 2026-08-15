@@ -101,6 +101,33 @@ button{color:inherit}
 }
 .toolbar-meta strong{color:#45433e;font-weight:800}
 
+/* ───────── yt-dlp status toast ───────── */
+#ytdlp-toast{
+  display:none;
+  align-items:center;gap:7px;
+  margin:0 10px 8px;
+  padding:6px 10px;
+  border-radius:9px;
+  border:1px solid var(--line);
+  background:var(--paper2);
+  color:#5a5750;
+  font-size:9.5px;
+  line-height:1.3;
+}
+#ytdlp-toast.show{display:flex}
+#ytdlp-toast.busy{border-color:#cfc9b8;background:#fbf6e8}
+#ytdlp-toast.error{border-color:#e3b9b9;background:#fbeeee;color:#a13d3d}
+#ytdlp-toast.ok{border-color:#bfe0cd;background:#eef8f2;color:#2f7a52}
+#ytdlp-toast .spin{
+  width:9px;height:9px;flex:0 0 auto;
+  border-radius:50%;
+  border:1.5px solid #c9c4b4;border-top-color:#171717;
+  animation:ytdlp-spin .8s linear infinite;
+}
+#ytdlp-toast.ok .spin,#ytdlp-toast.error .spin{display:none}
+#ytdlp-toast span.msg{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@keyframes ytdlp-spin{to{transform:rotate(360deg)}}
+
 /* ───────── Main screenshot-like grid ───────── */
 #dashboard{
   flex:1 1 auto;
@@ -615,6 +642,8 @@ input[type=range]::-webkit-slider-thumb{
     <div class="toolbar-meta"><span>Audio</span><strong>Ready</strong></div>
   </div>
 
+  <div id="ytdlp-toast"><div class="spin"></div><span class="msg"></span></div>
+
   <main id="dashboard">
 
     <section id="player-panel" class="panel">
@@ -1004,7 +1033,69 @@ input[type=range]::-webkit-slider-thumb{
     es.addEventListener("tiktok_status", () => refreshTiktok());
     es.addEventListener("skip_vote", () => refreshState());
     es.addEventListener("tiktok_request", () => refreshTiktok());
+    es.addEventListener("ytdlp_status", (ev) => {
+      try { handleYtdlpStatus(JSON.parse(ev.data)); } catch (e) {}
+    });
+    es.addEventListener("playback_failed", (ev) => {
+      try { handlePlaybackFailed(JSON.parse(ev.data)); } catch (e) {}
+    });
     es.onerror = () => { /* EventSource retries automatically */ };
+  }
+
+  // ── Playback failure toast (reuses the same yt-dlp toast element) ──
+  let playbackFailHideTimer = null;
+  function handlePlaybackFailed(d) {
+    const toast = $("ytdlp-toast");
+    const msgEl = toast.querySelector(".msg");
+    if (!toast || !msgEl) return;
+    if (playbackFailHideTimer) { clearTimeout(playbackFailHideTimer); playbackFailHideTimer = null; }
+    toast.classList.remove("busy", "ok");
+    toast.classList.add("show", "error");
+    msgEl.textContent = `Lewati "${d.title || "lagu"}" - ${d.reason || "gagal diputar"}`;
+    playbackFailHideTimer = setTimeout(() => toast.classList.remove("show"), 6000);
+  }
+
+  // ── yt-dlp download/update toast ───────────────
+  let ytdlpHideTimer = null;
+  function handleYtdlpStatus(d) {
+    const toast = $("ytdlp-toast");
+    const msgEl = toast.querySelector(".msg");
+    if (!toast || !msgEl) return;
+    if (ytdlpHideTimer) { clearTimeout(ytdlpHideTimer); ytdlpHideTimer = null; }
+
+    const messages = {
+      checking: "Mengecek update yt-dlp...",
+      downloading: "Download yt-dlp (pertama kali)...",
+      updating: `Update yt-dlp${d.to ? " ke " + d.to : ""}...`,
+      ready: d.firstRun
+        ? `yt-dlp siap dipakai${d.version ? " (v" + d.version + ")" : ""}`
+        : `yt-dlp berhasil diupdate${d.version ? " (v" + d.version + ")" : ""}`,
+      up_to_date: d.checkFailed
+        ? "Cek update yt-dlp gagal - pakai versi lokal"
+        : `yt-dlp sudah versi terbaru${d.version ? " (v" + d.version + ")" : ""}`,
+      skipped: "yt-dlp: pakai path custom (YTDLP_PATH)",
+      error: `yt-dlp gagal di-download${d.message ? ": " + d.message : ""}`,
+    };
+
+    const busyStatuses = new Set(["checking", "downloading", "updating"]);
+    toast.classList.remove("busy", "ok", "error");
+    msgEl.textContent = messages[d.status] || "";
+    toast.classList.add("show");
+
+    if (busyStatuses.has(d.status)) {
+      toast.classList.add("busy");
+      // stays visible until the next status event (ready/up_to_date/error)
+    } else if (d.status === "error") {
+      toast.classList.add("error");
+      ytdlpHideTimer = setTimeout(() => toast.classList.remove("show"), 8000);
+    } else if (d.status === "up_to_date" && d.checkFailed) {
+      // neutral - not really an error, but not a "success" to celebrate either
+      ytdlpHideTimer = setTimeout(() => toast.classList.remove("show"), 5000);
+    } else {
+      // ready / up_to_date / skipped
+      toast.classList.add("ok");
+      ytdlpHideTimer = setTimeout(() => toast.classList.remove("show"), 4000);
+    }
   }
 
   // ── Gift strip scroll arrows ───────────────────

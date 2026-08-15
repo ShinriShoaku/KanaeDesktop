@@ -200,8 +200,22 @@ async function playServerAudio(youtubeUrl) {
   }
 
   try {
-    const youtube = require("./youtube"); // lazy require avoids cycles
-    const streamUrl = await youtube.getAudioStreamUrl(youtubeUrl);
+    const resolvers = require("./resolvers"); // lazy require avoids cycles
+    const config = require("./config");
+    // Tries yt-dlp, then play-dl, then Piped (order configurable via
+    // config.json's resolver_order) - falls through to the next backend
+    // automatically if one fails/times out, instead of the whole playback
+    // attempt failing just because e.g. yt-dlp got rate-limited (429).
+    console.log(`[Player] Resolving playback link untuk ${youtubeUrl} ...`);
+    const resolveStart = Date.now();
+    const { streamUrl, subMap, source } = await resolvers.resolvePlaybackWithFallback(youtubeUrl, {
+      order: config.getResolverOrder(),
+    });
+    console.log(
+      `[Player] Link siap dalam ${((Date.now() - resolveStart) / 1000).toFixed(1)}s via ${source} (${
+        Object.keys(subMap || {}).length
+      } bahasa subtitle tersedia)`
+    );
     const musicVol = getMusicVolume();
     const isMpv = path.basename(player).includes("mpv");
 
@@ -214,8 +228,14 @@ async function playServerAudio(youtubeUrl) {
       }
       args = [
         "--no-video",
-        "--really-quiet",
         "--no-terminal",
+        // NOT --really-quiet: that suppresses mpv's error output entirely,
+        // which is exactly the information we need when playback fails
+        // (e.g. "Failed to open stream: 403/429", codec issues, etc).
+        // all=error keeps normal operation silent but still surfaces
+        // anything that actually goes wrong, and we now capture+log it
+        // below instead of throwing it away (stdio was "ignore" before).
+        "--msg-level=all=error",
         `--input-ipc-server=${paths.MPV_SOCKET_ARG}`,
         `--volume=${musicVol}`,
         streamUrl,
@@ -225,21 +245,53 @@ async function playServerAudio(youtubeUrl) {
       args = ["-nodisp", "-autoexit", "-loglevel", "quiet", "-volume", String(musicVol), streamUrl];
     }
 
-    const proc = spawn(player, args, { stdio: "ignore", detached: false });
+    const proc = spawn(player, args, { stdio: ["ignore", "ignore", "pipe"], detached: false });
     state.mpvProc = proc;
     state.currentSongStartTime = Date.now() / 1000;
-    proc.on("error", (e) => console.error("[Player] spawn error:", e.message));
+
+    // stderr was previously fully discarded (stdio:"ignore"), so whenever
+    // mpv failed to actually play something (expired/rate-limited stream
+    // URL, network error, etc.) there was zero visibility into why - the
+    // song just silently died. Now we keep the last chunk of its stderr
+    // and print it if the process exits abnormally.
+    const playerName = path.basename(player);
+    let stderrTail = "";
+    if (proc.stderr) {
+      proc.stderr.on("data", (chunk) => {
+        stderrTail = (stderrTail + chunk.toString("utf-8")).slice(-4000);
+      });
+    }
+
+    proc.on("error", (e) => console.error(`[Player] Gagal spawn ${playerName}:`, e.message));
+
+    proc.on("exit", (code, signal) => {
+      const elapsed = (Date.now() / 1000 - state.currentSongStartTime).toFixed(1);
+      if (state.playerKilled) {
+        // Intentional stop/skip - not an error, nothing to log.
+        return;
+      }
+      if (code !== 0 || signal || Number(elapsed) < 3) {
+        console.error(
+          `[Player] ${playerName} berhenti nggak wajar setelah ${elapsed}s (exit code=${code}, signal=${signal || "-"}).` +
+            (stderrTail.trim()
+              ? ` ${playerName} stderr:\n${stderrTail.trim()}`
+              : ` (tidak ada output error dari ${playerName} - kemungkinan proses ke-kill paksa dari luar)`)
+        );
+      } else {
+        console.log(`[Player] ${playerName} selesai memutar setelah ${elapsed}s (code=${code}).`);
+      }
+    });
 
     if (state.currentSong) {
       try {
-        require("./subtitles").startSubtitleBroadcaster(state.currentSong, state.currentSongStartTime);
+        require("./subtitles").startSubtitleBroadcaster(state.currentSong, state.currentSongStartTime, subMap);
       } catch (e) {
         /* subtitles are best-effort */
       }
     }
     return true;
   } catch (e) {
-    console.error("[Player] Error starting player:", e.message);
+    console.error("[Player] Error starting player (gagal resolve link sebelum sempat mutar):", e.message);
     return false;
   }
 }

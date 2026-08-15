@@ -35,6 +35,13 @@ const DEFAULT_CONFIG = {
     max_length: 100,
     volume_pct: 0,
   },
+  // Order of audio-resolving backends to try, first to last, with automatic
+  // fallback to the next one on failure. See src/resolvers.js. Valid values:
+  // "ytdlp" (binary, most complete/gets subtitles too), "play-dl" (pure JS
+  // library, no binary), "piped" (public REST API, zero dependency). Drop
+  // an entry to disable that backend entirely, or reorder based on your own
+  // results from `npm run benchmark-resolvers`.
+  resolver_order: ["ytdlp", "play-dl", "piped"],
   overlay: {},
 };
 
@@ -136,6 +143,12 @@ function getTtsConfig() {
   return { ...DEFAULT_CONFIG.tts, ...(cfg.tts || {}) };
 }
 
+function getResolverOrder() {
+  const cfg = loadConfig();
+  const order = Array.isArray(cfg.resolver_order) ? cfg.resolver_order : null;
+  return order && order.length ? order : DEFAULT_CONFIG.resolver_order;
+}
+
 // ── Bad word filter ──────────────────────────────────────────
 let _badwordsCache = null;
 let _badwordsMtime = 0;
@@ -199,6 +212,7 @@ module.exports = {
   getEulerStreamApiKey,
   getSettings,
   getTtsConfig,
+  getResolverOrder,
   loadBadwords,
   saveBadwords,
   containsBadword,

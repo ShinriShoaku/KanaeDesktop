@@ -9,6 +9,7 @@ const mpv = require("./mpv");
 const tiktok = require("./tiktok");
 const versionMod = require("./version");
 const ytdlpManager = require("./ytdlpManager");
+const sse = require("./sse");
 const playerService = require("./playerService");
 const { state, flushQueueSync } = require("./state");
 
@@ -45,11 +46,6 @@ async function main() {
   state.musicVolume = Number.isFinite(parseInt(musicRaw, 10)) ? Math.max(0, Math.min(150, parseInt(musicRaw, 10))) : 100;
   const ttsPct = cfg.tts?.volume_pct;
   state.ttsVolumePct = Number.isFinite(parseInt(ttsPct, 10)) ? Math.max(-50, Math.min(100, parseInt(ttsPct, 10))) : 0;
-
-  // Download yt-dlp on first run, or update it if a newer release is out.
-  // Best-effort: if this fails (offline, GitHub down, etc.) startup still
-  // continues using whatever yt-dlp is already available (bundled or PATH).
-  await ytdlpManager.ensureYtdlp();
 
   const found = mpv.detectPlayer();
   if (found) {
@@ -93,6 +89,16 @@ async function main() {
     console.log(`  OBS Chat  : http://localhost:${PORT}/obs/chat`);
     console.log("=".repeat(56));
   });
+
+  // Download yt-dlp on first run, or update it if a newer release is out.
+  // This runs in the BACKGROUND, deliberately *after* the server above is
+  // already listening: a first-run download can take longer than the
+  // desktop shell's backend-readiness timeout, so it must never delay
+  // startup. Progress is broadcast over SSE as "ytdlp_status" so the UI
+  // (compact.html) can show a toast; anything that actually calls yt-dlp
+  // (src/youtube.js) awaits ytdlpManager.waitUntilReady() itself.
+  ytdlpManager.onStatus((status, data) => sse.broadcast("ytdlp_status", { status, ...data }));
+  ytdlpManager.startEnsureYtdlp();
 }
 
 process.on("SIGINT", async () => {

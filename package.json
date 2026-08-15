@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/server.js",
-    "desktop": "electron ."
+    "desktop": "electron .",
+    "benchmark-resolvers": "node scripts/benchmark-resolvers.js"
   },
   "license": "MIT",
   "dependencies": {
@@ -14,6 +15,8 @@
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "msedge-tts": "^2.0.7",
+    "piped": "^2.0.0",
+    "play-dl": "^1.9.7",
     "tiktok-live-connector": "^2.4.3",
     "uuid": "^9.0.1",
     "ws": "^8.18.0"
