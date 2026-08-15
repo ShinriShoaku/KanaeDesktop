@@ -91,7 +91,7 @@ const state = {
   mpvProc: null, // child_process handle
   serverPlayer: null, // resolved binary path/name
   playerKilled: false,
-
+  ytdlpProc: null,
   // skip votes / per-user throttling
   skipVotes: new Set(),
   userRequestCount: {}, // user_id -> count

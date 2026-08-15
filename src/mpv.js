@@ -3,21 +3,39 @@
 /**
  * mpv detection + JSON IPC control.
  *
- * Patch:
- * - Defensive removal of invalid "--question" option.
- * - Validate mpv executable before playback.
- * - Log exact executable + arguments.
- * - Keep stdout/stderr diagnostics.
- * - Prevent stale/broken mpv binaries from silently failing.
- * - Keep persistent IPC connection.
+ * KanaeDesktop
+ *
+ * Playback flow:
+ *
+ * YouTube URL
+ *      ↓
+ * resolver / yt-dlp
+ *      ↓
+ * direct googlevideo audio URL
+ *      ↓
+ * mpv
+ *
+ * Important:
+ * - mpv is launched with --no-config
+ * - audio-only playback
+ * - stdout + stderr are captured
+ * - mpv uses info logging so playback errors are visible
+ * - IPC connection is persistent
+ * - invalid legacy --question argument is filtered defensively
  */
 
-const { spawn, execFileSync } = require("child_process");
+const {
+  spawn,
+  execFileSync,
+} = require("child_process");
+
 const net = require("net");
 const fs = require("fs");
 const path = require("path");
+
 const paths = require("./paths");
 const { state } = require("./state");
+const ytdlpManager = require("./ytdlpManager");
 
 // ─────────────────────────────────────────────────────────────
 // PLAYER DETECTION
@@ -25,9 +43,28 @@ const { state } = require("./state");
 
 function findLocalPlayer(name) {
   const candidates = [
-    path.join(paths.BASE_DIR, paths.IS_WINDOWS ? `${name}.exe` : name),
-    path.join(paths.BASE_DIR, "mpv", paths.IS_WINDOWS ? `${name}.exe` : name),
-    path.join(paths.BASE_DIR, "bin", paths.IS_WINDOWS ? `${name}.exe` : name),
+    path.join(
+      paths.BASE_DIR,
+      paths.IS_WINDOWS
+        ? `${name}.exe`
+        : name
+    ),
+
+    path.join(
+      paths.BASE_DIR,
+      "mpv",
+      paths.IS_WINDOWS
+        ? `${name}.exe`
+        : name
+    ),
+
+    path.join(
+      paths.BASE_DIR,
+      "bin",
+      paths.IS_WINDOWS
+        ? `${name}.exe`
+        : name
+    ),
   ];
 
   for (const p of candidates) {
@@ -46,54 +83,72 @@ function findLocalPlayer(name) {
 /**
  * Resolution order:
  *
- * 1. MPV_PATH override / bundled mpv from mpvManager.
- * 2. Local mpv.
- * 3. System PATH.
+ * 1. MPV_PATH
+ * 2. bundled mpv from mpvManager
+ * 3. BASE_DIR/mpv
+ * 4. BASE_DIR/bin/mpv
+ * 5. system mpv from PATH
  */
 function detectPlayer() {
-  // Explicit MPV_PATH always wins.
+  // Explicit override.
   if (process.env.MPV_PATH) {
-    const configured = process.env.MPV_PATH;
-
     try {
-      if (fs.existsSync(configured)) {
-        return configured;
+      if (
+        fs.existsSync(
+          process.env.MPV_PATH
+        )
+      ) {
+        return process.env.MPV_PATH;
       }
     } catch (e) {
       // Fall through.
     }
 
-    // On PATH-style values, still allow spawn to resolve it.
-    if (!path.isAbsolute(configured)) {
-      return configured;
+    // Allow PATH-style MPV_PATH.
+    if (
+      !path.isAbsolute(
+        process.env.MPV_PATH
+      )
+    ) {
+      return process.env.MPV_PATH;
     }
-
-    console.warn(`[Player] MPV_PATH diset tetapi file tidak ditemukan: ${configured}`);
   }
 
+  // Bundled mpv.
   try {
-    const bundled = require("./mpvManager").getMpvBin();
+    const bundled =
+      require("./mpvManager").getMpvBin();
 
     if (bundled) {
       return bundled;
     }
   } catch (e) {
-    console.warn(`[Player] mpvManager tidak dapat digunakan: ${e.message}`);
+    console.warn(
+      `[Player] mpvManager detection failed: ${e.message}`
+    );
   }
 
-  const local = findLocalPlayer("mpv");
+  // Local manual mpv.
+  const local =
+    findLocalPlayer("mpv");
 
   if (local) {
     return local;
   }
 
-  // Try system PATH.
+  // System PATH.
   try {
     execFileSync(
-      paths.IS_WINDOWS ? "where" : "which",
+      paths.IS_WINDOWS
+        ? "where"
+        : "which",
       ["mpv"],
       {
-        stdio: ["ignore", "pipe", "ignore"],
+        stdio: [
+          "ignore",
+          "pipe",
+          "ignore",
+        ],
       }
     );
 
@@ -107,113 +162,135 @@ function detectPlayer() {
 // MPV VALIDATION
 // ─────────────────────────────────────────────────────────────
 
-/**
- * Validate that the executable is actually mpv and can start.
- *
- * Returns:
- *   {
- *     valid: true,
- *     version: "...",
- *     path: "..."
- *   }
- *
- * or:
- *   {
- *     valid: false,
- *     error: "..."
- *   }
- */
 function validateMpvBinary(player) {
   if (!player) {
     return {
       valid: false,
-      error: "Path mpv kosong",
+      version: null,
+      error: "mpv path kosong",
     };
   }
 
   try {
-    const result = execFileSync(
-      player,
-      [
-        "--no-config",
-        "--version",
-      ],
-      {
-        encoding: "utf8",
-        timeout: 10000,
-        stdio: ["ignore", "pipe", "pipe"],
-      }
-    );
+    if (
+      path.isAbsolute(player) &&
+      !fs.existsSync(player)
+    ) {
+      return {
+        valid: false,
+        version: null,
+        error:
+          "file mpv tidak ditemukan",
+      };
+    }
+  } catch (e) {
+    return {
+      valid: false,
+      version: null,
+      error: e.message,
+    };
+  }
 
-    const output = String(result || "").trim();
+  try {
+    const result =
+      execFileSync(
+        player,
+        [
+          "--no-config",
+          "--version",
+        ],
+        {
+          encoding: "utf8",
+          timeout: 10000,
+          stdio: [
+            "ignore",
+            "pipe",
+            "pipe",
+          ],
+        }
+      );
+
+    const output =
+      String(result || "").trim();
 
     if (!output) {
       return {
         valid: false,
-        error: "mpv tidak mengembalikan output versi",
+        version: null,
+        error:
+          "mpv tidak memberikan output version",
       };
     }
 
-    const firstLine = output
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find(Boolean);
+    const firstLine =
+      output
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean);
 
-    if (!firstLine || !/\bmpv\b/i.test(firstLine)) {
+    if (
+      !firstLine ||
+      !/\bmpv\b/i.test(firstLine)
+    ) {
       return {
         valid: false,
-        error: `Executable bukan mpv: ${firstLine || "(empty)"}`,
+        version: null,
+        error:
+          `Executable bukan mpv: ${firstLine || "(empty)"}`,
       };
     }
 
     return {
       valid: true,
       version: firstLine,
-      path: player,
+      error: null,
     };
   } catch (e) {
     return {
       valid: false,
-      error: e && e.message
-        ? e.message
-        : String(e),
+      version: null,
+      error:
+        e && e.message
+          ? e.message
+          : String(e),
     };
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// ARGUMENT SANITIZATION
+// ─────────────────────────────────────────────────────────────
+
 /**
- * Defensive sanitizer.
+ * mpv does NOT have --question.
  *
- * "--question" is NOT a valid mpv option.
- *
- * If an old build, injected argument, or future code accidentally
- * adds it, remove it before spawning mpv.
+ * Keep this filter because old builds / future code / injected
+ * arguments should never be able to break playback with this
+ * invalid option.
  */
 function sanitizeMpvArgs(args) {
   if (!Array.isArray(args)) {
     return [];
   }
 
-  const sanitized = [];
+  const result = [];
+
   const removed = [];
 
-  for (const rawArg of args) {
-    const arg = String(rawArg);
+  for (const raw of args) {
+    const arg = String(raw);
 
-    // Exact:
-    //   --question
-    //
-    // Also catches:
-    //   --question=...
     if (
       arg === "--question" ||
-      arg.startsWith("--question=")
+      arg.startsWith(
+        "--question="
+      )
     ) {
       removed.push(arg);
       continue;
     }
 
-    sanitized.push(arg);
+    result.push(arg);
   }
 
   if (removed.length > 0) {
@@ -222,26 +299,43 @@ function sanitizeMpvArgs(args) {
     );
   }
 
-  return sanitized;
+  return result;
 }
 
-/**
- * Format command for diagnostics.
- */
-function formatCommand(player, args) {
-  const quote = (value) => {
-    const text = String(value);
+// ─────────────────────────────────────────────────────────────
+// COMMAND FORMATTER
+// ─────────────────────────────────────────────────────────────
 
-    if (
-      /^[a-zA-Z0-9_./:=+@%-]+$/.test(text)
-    ) {
-      return text;
-    }
+function shellQuote(value) {
+  const text =
+    String(value);
 
-    return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-  };
+  if (
+    /^[a-zA-Z0-9_./:=+@%-]+$/.test(
+      text
+    )
+  ) {
+    return text;
+  }
 
-  return `${quote(player)} ${args.map(quote).join(" ")}`;
+  return (
+    "'" +
+    text.replace(
+      /'/g,
+      "'\\''"
+    ) +
+    "'"
+  );
+}
+
+function formatCommand(
+  executable,
+  args
+) {
+  return [
+    shellQuote(executable),
+    ...args.map(shellQuote),
+  ].join(" ");
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -249,20 +343,41 @@ function formatCommand(player, args) {
 // ─────────────────────────────────────────────────────────────
 
 function getMusicVolume() {
-  return state.musicVolume;
+  const volume =
+    Number(
+      state.musicVolume
+    );
+
+  if (
+    !Number.isFinite(volume)
+  ) {
+    return 100;
+  }
+
+  return Math.max(
+    0,
+    Math.min(
+      100,
+      volume
+    )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────
-// PERSISTENT IPC CONNECTION
+// IPC
 // ─────────────────────────────────────────────────────────────
 
 let _ipcSocket = null;
+
 let _ipcConnecting = null;
+
 let _ipcBuf = "";
 
-// FIFO:
-// { resolve, timer }
 let _pending = [];
+
+// ─────────────────────────────────────────────────────────────
+// RESET IPC
+// ─────────────────────────────────────────────────────────────
 
 function _resetIpc() {
   if (_ipcSocket) {
@@ -275,12 +390,20 @@ function _resetIpc() {
   }
 
   _ipcSocket = null;
+
+  _ipcConnecting = null;
+
   _ipcBuf = "";
 
-  for (const p of _pending) {
+  for (
+    const pending of _pending
+  ) {
     try {
-      clearTimeout(p.timer);
-      p.resolve(null);
+      clearTimeout(
+        pending.timer
+      );
+
+      pending.resolve(null);
     } catch (e) {
       // Ignore.
     }
@@ -289,191 +412,328 @@ function _resetIpc() {
   _pending = [];
 }
 
-function _getIpcSocket(socketPath) {
-  if (_ipcSocket && !_ipcSocket.destroyed) {
-    return Promise.resolve(_ipcSocket);
+// ─────────────────────────────────────────────────────────────
+// CONNECT IPC
+// ─────────────────────────────────────────────────────────────
+
+function _getIpcSocket(
+  socketPath
+) {
+  if (
+    _ipcSocket &&
+    !_ipcSocket.destroyed
+  ) {
+    return Promise.resolve(
+      _ipcSocket
+    );
   }
 
   if (_ipcConnecting) {
     return _ipcConnecting;
   }
 
-  _ipcConnecting = new Promise((resolve, reject) => {
-    const sock = net.createConnection(socketPath);
+  _ipcConnecting =
+    new Promise(
+      (resolve, reject) => {
+        const sock =
+          net.createConnection(
+            socketPath
+          );
 
-    const onFailure = (err) => {
-      _ipcConnecting = null;
-      _resetIpc();
-      reject(err || new Error("mpv IPC connect failed"));
-    };
+        let failed = false;
 
-    sock.once("error", onFailure);
-
-    sock.once("connect", () => {
-      sock.removeListener("error", onFailure);
-
-      sock.on("data", (chunk) => {
-        _ipcBuf += chunk.toString("utf-8");
-
-        const lines = _ipcBuf.split("\n");
-
-        // Keep incomplete trailing line.
-        _ipcBuf = lines.pop();
-
-        for (const line of lines) {
-          if (!line.trim()) {
-            continue;
-          }
-
-          let parsed;
-
-          try {
-            parsed = JSON.parse(line);
-          } catch (e) {
-            continue;
-          }
-
-          // Command replies have an "error" field.
-          if (
-            Object.prototype.hasOwnProperty.call(
-              parsed,
-              "error"
-            )
-          ) {
-            const p = _pending.shift();
-
-            if (p) {
-              clearTimeout(p.timer);
-              p.resolve(parsed);
+        const onFailure =
+          (err) => {
+            if (failed) {
+              return;
             }
+
+            failed = true;
+
+            _ipcConnecting = null;
+
+            _resetIpc();
+
+            reject(
+              err ||
+                new Error(
+                  "mpv IPC connect failed"
+                )
+            );
+          };
+
+        sock.once(
+          "error",
+          onFailure
+        );
+
+        sock.once(
+          "connect",
+          () => {
+            if (failed) {
+              return;
+            }
+
+            sock.removeListener(
+              "error",
+              onFailure
+            );
+
+            // ─────────────────────────────────
+            // MPV IPC DATA
+            // ─────────────────────────────────
+
+            sock.on(
+              "data",
+              (chunk) => {
+                _ipcBuf +=
+                  chunk.toString(
+                    "utf8"
+                  );
+
+                const lines =
+                  _ipcBuf.split(
+                    "\n"
+                  );
+
+                _ipcBuf =
+                  lines.pop() || "";
+
+                for (
+                  const line of lines
+                ) {
+                  if (
+                    !line.trim()
+                  ) {
+                    continue;
+                  }
+
+                  let parsed;
+
+                  try {
+                    parsed =
+                      JSON.parse(
+                        line
+                      );
+                  } catch (e) {
+                    continue;
+                  }
+
+                  if (
+                    Object.prototype.hasOwnProperty.call(
+                      parsed,
+                      "error"
+                    )
+                  ) {
+                    const pending =
+                      _pending.shift();
+
+                    if (pending) {
+                      clearTimeout(
+                        pending.timer
+                      );
+
+                      pending.resolve(
+                        parsed
+                      );
+                    }
+                  }
+                }
+              }
+            );
+
+            sock.on(
+              "close",
+              () => {
+                if (
+                  _ipcSocket ===
+                  sock
+                ) {
+                  _ipcSocket =
+                    null;
+                }
+              }
+            );
+
+            sock.on(
+              "error",
+              () => {
+                if (
+                  _ipcSocket ===
+                  sock
+                ) {
+                  _resetIpc();
+                }
+              }
+            );
+
+            _ipcSocket =
+              sock;
+
+            _ipcConnecting =
+              null;
+
+            resolve(sock);
           }
-        }
-      });
-
-      sock.on("close", () => {
-        _resetIpc();
-      });
-
-      sock.on("error", () => {
-        _resetIpc();
-      });
-
-      _ipcSocket = sock;
-      _ipcConnecting = null;
-
-      resolve(sock);
-    });
-  });
+        );
+      }
+    );
 
   return _ipcConnecting;
 }
 
-/**
- * Send JSON IPC command to running mpv.
- */
+// ─────────────────────────────────────────────────────────────
+// SEND IPC COMMAND
+// ─────────────────────────────────────────────────────────────
+
 async function mpvSend(
   command,
-  socketPath = paths.MPV_SOCKET_ARG,
+  socketPath =
+    paths.MPV_SOCKET_ARG,
   timeout = 2000
 ) {
   let sock;
 
   try {
-    sock = await _getIpcSocket(socketPath);
+    sock =
+      await _getIpcSocket(
+        socketPath
+      );
   } catch (e) {
     return null;
   }
 
-  return new Promise((resolve) => {
-    const entry = {
-      resolve,
-      timer: null,
-    };
+  return new Promise(
+    (resolve) => {
+      const entry = {
+        resolve,
+        timer: null,
+      };
 
-    entry.timer = setTimeout(() => {
-      const idx = _pending.indexOf(entry);
+      entry.timer =
+        setTimeout(
+          () => {
+            const index =
+              _pending.indexOf(
+                entry
+              );
 
-      if (idx !== -1) {
-        _pending.splice(idx, 1);
+            if (index !== -1) {
+              _pending.splice(
+                index,
+                1
+              );
+            }
+
+            resolve(null);
+          },
+          timeout
+        );
+
+      _pending.push(entry);
+
+      try {
+        sock.write(
+          JSON.stringify({
+            command,
+          }) + "\n"
+        );
+      } catch (e) {
+        clearTimeout(
+          entry.timer
+        );
+
+        const index =
+          _pending.indexOf(
+            entry
+          );
+
+        if (index !== -1) {
+          _pending.splice(
+            index,
+            1
+          );
+        }
+
+        resolve(null);
       }
-
-      resolve(null);
-    }, timeout);
-
-    _pending.push(entry);
-
-    try {
-      sock.write(
-        JSON.stringify({ command }) + "\n"
-      );
-    } catch (e) {
-      clearTimeout(entry.timer);
-
-      const idx = _pending.indexOf(entry);
-
-      if (idx !== -1) {
-        _pending.splice(idx, 1);
-      }
-
-      resolve(null);
     }
-  });
+  );
 }
 
 // ─────────────────────────────────────────────────────────────
-// STOP
+// STOP PLAYER
 // ─────────────────────────────────────────────────────────────
 
 async function killServerPlayer() {
   state.playerKilled = true;
 
+  // ─────────────────────────────────────────
+  // Kill yt-dlp pipe process first.
+  // ─────────────────────────────────────────
+
+  if (state.ytdlpProc) {
+    try {
+      state.ytdlpProc.kill("SIGTERM");
+    } catch (e) {}
+
+    state.ytdlpProc = null;
+  }
+
+  // ─────────────────────────────────────────
+  // Kill mpv.
+  // ─────────────────────────────────────────
+
   if (state.mpvProc) {
     if (
       state.serverPlayer &&
-      state.serverPlayer.toLowerCase().includes("mpv")
+      state.serverPlayer.includes("mpv")
     ) {
-      try {
-        await mpvSend(
-          ["quit"],
-          paths.MPV_SOCKET_ARG,
-          1000
-        );
-      } catch (e) {
-        // Ignore.
-      }
+      await mpvSend(
+        ["quit"],
+        paths.MPV_SOCKET_ARG,
+        1000
+      );
 
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise(
+        (resolve) =>
+          setTimeout(resolve, 300)
+      );
     }
 
     try {
       state.mpvProc.kill();
-    } catch (e) {
-      // Ignore.
-    }
+    } catch (e) {}
 
     state.mpvProc = null;
   }
+
+  // ─────────────────────────────────────────
+  // Reset IPC.
+  // ─────────────────────────────────────────
 
   _resetIpc();
 
   if (!paths.IS_WINDOWS) {
     try {
-      fs.unlinkSync(paths.MPV_SOCKET_ARG);
-    } catch (e) {
-      // Socket may not exist.
-    }
+      fs.unlinkSync(
+        paths.MPV_SOCKET_ARG
+      );
+    } catch (e) {}
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-// PAUSE / RESUME
+// PAUSE
 // ─────────────────────────────────────────────────────────────
 
 async function pauseServerAudio() {
   if (
     state.mpvProc &&
     state.serverPlayer &&
-    state.serverPlayer.toLowerCase().includes("mpv")
+    state.serverPlayer
+      .toLowerCase()
+      .includes("mpv")
   ) {
     await mpvSend([
       "set_property",
@@ -482,14 +742,21 @@ async function pauseServerAudio() {
     ]);
   }
 
-  state.isPaused = true;
+  state.isPaused =
+    true;
 }
+
+// ─────────────────────────────────────────────────────────────
+// RESUME
+// ─────────────────────────────────────────────────────────────
 
 async function resumeServerAudio() {
   if (
     state.mpvProc &&
     state.serverPlayer &&
-    state.serverPlayer.toLowerCase().includes("mpv")
+    state.serverPlayer
+      .toLowerCase()
+      .includes("mpv")
   ) {
     await mpvSend([
       "set_property",
@@ -498,309 +765,518 @@ async function resumeServerAudio() {
     ]);
   }
 
-  state.isPaused = false;
+  state.isPaused =
+    false;
 }
 
 // ─────────────────────────────────────────────────────────────
-// PLAY
+// PLAY SERVER AUDIO
 // ─────────────────────────────────────────────────────────────
 
-async function playServerAudio(youtubeUrl) {
+async function playServerAudio(
+  youtubeUrl
+) {
   await killServerPlayer();
 
   state.playerKilled = false;
   state.isPaused = false;
 
-  // Re-detect every playback.
-  state.serverPlayer = detectPlayer();
+  // Re-detect player every time so bundled mpv
+  // becomes active immediately after download.
+  state.serverPlayer =
+    detectPlayer();
 
-  const player = state.serverPlayer;
+  const player =
+    state.serverPlayer;
 
   if (!player) {
     console.error(
-      "[Player] No local mpv found. " +
-      "Place mpv in the app folder or install it system-wide."
+      "[Player] No local mpv found. Place mpv in the app folder or install it system-wide."
     );
 
     return false;
   }
 
-  // ───────────────────────────────────────────────
-  // Validate executable BEFORE resolving stream.
-  // ───────────────────────────────────────────────
-
-  const playerBaseName = path.basename(player);
-  const isMpv =
-    playerBaseName.toLowerCase().includes("mpv");
-
-  if (isMpv) {
-    const validation = validateMpvBinary(player);
-
-    if (!validation.valid) {
-      console.error(
-        `[Player] Invalid mpv binary: ${player}`
-      );
-
-      console.error(
-        `[Player] Validation error: ${validation.error}`
-      );
-
-      // If bundled binary is broken, try system mpv.
-      if (
-        !process.env.MPV_PATH &&
-        player !== "mpv"
-      ) {
-        console.warn(
-          "[Player] Mencoba fallback ke mpv system PATH..."
-        );
-
-        try {
-          execFileSync(
-            paths.IS_WINDOWS ? "where" : "which",
-            ["mpv"],
-            {
-              stdio: [
-                "ignore",
-                "pipe",
-                "ignore",
-              ],
-            }
-          );
-
-          state.serverPlayer = "mpv";
-        } catch (e) {
-          console.error(
-            "[Player] mpv system juga tidak tersedia."
-          );
-
-          return false;
-        }
-      } else {
-        return false;
-      }
-    } else {
-      console.log(
-        `[Player] Validated: ${validation.version}`
-      );
-      console.log(
-        `[Player] Binary: ${validation.path}`
-      );
-    }
-  }
-
-  const activePlayer = state.serverPlayer;
-
   try {
-    const resolvers = require("./resolvers");
-    const config = require("./config");
+    const resolvers =
+      require("./resolvers");
+
+    const config =
+      require("./config");
 
     console.log(
-      `[Player] Resolving playback link untuk ${youtubeUrl} ...`
+      `[Player] Resolving playback untuk ${youtubeUrl} ...`
     );
 
-    const resolveStart = Date.now();
+    const resolveStart =
+      Date.now();
 
     const {
       streamUrl,
+      playbackUrl,
+      playbackMode,
       subMap,
       source,
     } =
       await resolvers.resolvePlaybackWithFallback(
         youtubeUrl,
         {
-          order: config.getResolverOrder(),
+          order:
+            config.getResolverOrder(),
         }
       );
 
+    const resolveMs =
+      Date.now() -
+      resolveStart;
+
     console.log(
-      `[Player] Link siap dalam ${(
-        (Date.now() - resolveStart) /
-        1000
-      ).toFixed(1)}s via ${source} (${
-        Object.keys(subMap || {}).length
-      } bahasa subtitle tersedia)`
+      `[Player] Resolver selesai dalam ${(resolveMs / 1000).toFixed(1)}s via ${source}`
     );
 
-    if (!streamUrl) {
-      console.error(
-        "[Player] Resolver tidak menghasilkan stream URL."
-      );
+    console.log(
+      `[Player] Playback mode: ${
+        playbackMode || "direct"
+      }`
+    );
 
-      return false;
+    // ───────────────────────────────────────
+    // Validate result.
+    // ───────────────────────────────────────
+
+    const useYtdlpPipe =
+      playbackMode ===
+      "ytdlp-pipe";
+
+    if (
+      !useYtdlpPipe &&
+      !streamUrl
+    ) {
+      throw new Error(
+        "Resolver tidak menghasilkan stream URL"
+      );
     }
 
-    const musicVol = getMusicVolume();
+    if (
+      useYtdlpPipe &&
+      !playbackUrl
+    ) {
+      throw new Error(
+        "yt-dlp pipe membutuhkan playbackUrl"
+      );
+    }
 
-    const activePlayerName =
-      path.basename(activePlayer);
+    // ───────────────────────────────────────
+    // Volume.
+    // ───────────────────────────────────────
 
-    const activeIsMpv =
-      activePlayerName
+    const musicVol =
+      Math.max(
+        0,
+        Math.min(
+          150,
+          Number(
+            getMusicVolume()
+          ) || 100
+        )
+      );
+
+    const isMpv =
+      path
+        .basename(player)
         .toLowerCase()
         .includes("mpv");
 
     let args;
 
-    if (activeIsMpv) {
+    // ───────────────────────────────────────
+    // MPV
+    // ───────────────────────────────────────
+
+    if (isMpv) {
       if (!paths.IS_WINDOWS) {
         try {
-          fs.unlinkSync(paths.MPV_SOCKET_ARG);
-        } catch (e) {
-          // Socket does not exist.
-        }
+          fs.unlinkSync(
+            paths.MPV_SOCKET_ARG
+          );
+        } catch (e) {}
       }
 
       args = [
         "--no-config",
+
+        // IMPORTANT:
+        // Never let mpv/ytdl_hook resolve the
+        // YouTube URL again.
+        "--ytdl=no",
+
         "--no-video",
         "--no-terminal",
-        "--msg-level=all=error",
+
+        "--msg-level=all=info",
 
         `--input-ipc-server=${paths.MPV_SOCKET_ARG}`,
 
         `--volume=${musicVol}`,
 
-        // Explicit end-of-options marker.
-        "--",
+        "--audio-display=no",
 
-        streamUrl,
+        // Input:
+        //
+        // ytdlp-pipe => stdin
+        // direct     => resolved URL
+        "--",
+        useYtdlpPipe
+          ? "-"
+          : streamUrl,
       ];
+
     } else {
       // ffplay fallback.
-      args = [
-        "-nodisp",
-        "-autoexit",
-        "-loglevel",
-        "quiet",
-        "-volume",
-        String(musicVol),
-        streamUrl,
-      ];
+      //
+      // Pipe mode also works here because ffplay
+      // accepts stdin as input.
+      args = useYtdlpPipe
+        ? [
+            "-nodisp",
+            "-autoexit",
+            "-loglevel",
+            "info",
+            "-volume",
+            String(
+              musicVol
+            ),
+            "-",
+          ]
+        : [
+            "-nodisp",
+            "-autoexit",
+            "-loglevel",
+            "quiet",
+            "-volume",
+            String(
+              musicVol
+            ),
+            streamUrl,
+          ];
     }
-
-    // ───────────────────────────────────────────────
-    // CRITICAL PATCH
-    // ───────────────────────────────────────────────
-    //
-    // Remove "--question" if an old build / external
-    // code accidentally injects it.
-    //
-    // mpv does NOT support --question.
-    // ───────────────────────────────────────────────
-
-    if (activeIsMpv) {
-      args = sanitizeMpvArgs(args);
-    }
-
-    // ───────────────────────────────────────────────
-    // Full command diagnostics.
-    // ───────────────────────────────────────────────
 
     console.log(
-      `[Player] Executable: ${activePlayer}`
+      `[Player] Executable: ${player}`
     );
 
     console.log(
       `[Player] Args: ${JSON.stringify(args)}`
     );
 
-    console.log(
-      `[Player] Command: ${formatCommand(
-        activePlayer,
-        args
-      )}`
-    );
+    // ───────────────────────────────────────
+    // Spawn mpv.
+    // ───────────────────────────────────────
 
-    // ───────────────────────────────────────────────
-    // Spawn
-    // ───────────────────────────────────────────────
+    const proc =
+      spawn(
+        player,
+        args,
+        {
+          stdio: [
+            // stdin is PIPE because yt-dlp can
+            // stream audio into it.
+            "pipe",
 
-    const proc = spawn(
-      activePlayer,
-      args,
-      {
-        stdio: [
-          "ignore",
-          "pipe",
-          "pipe",
-        ],
-        detached: false,
+            "pipe",
+            "pipe",
+          ],
 
-        // Do not allow inherited MPV_OPTIONS-like
-        // application environment variables to alter
-        // normal process behavior.
-        env: {
-          ...process.env,
-        },
-      }
-    );
+          detached: false,
+        }
+      );
 
-    state.mpvProc = proc;
+    state.mpvProc =
+      proc;
 
     state.currentSongStartTime =
       Date.now() / 1000;
 
-    // ───────────────────────────────────────────────
-    // Capture stdout/stderr
-    // ───────────────────────────────────────────────
-
     const playerName =
-      path.basename(activePlayer);
+      path.basename(
+        player
+      );
 
     let outputTail = "";
 
-    const captureOutput = (chunk) => {
-      outputTail = (
-        outputTail +
-        chunk.toString("utf-8")
-      ).slice(-8000);
-    };
+    const captureOutput =
+      (sourceName, chunk) => {
+        outputTail =
+          (
+            outputTail +
+            `\n[${sourceName}] ${chunk.toString(
+              "utf8"
+            )}`
+          ).slice(
+            -12000
+          );
+      };
 
     if (proc.stdout) {
       proc.stdout.on(
         "data",
-        captureOutput
+        (chunk) => {
+          captureOutput(
+            "stdout",
+            chunk
+          );
+        }
       );
     }
 
     if (proc.stderr) {
       proc.stderr.on(
         "data",
-        captureOutput
+        (chunk) => {
+          captureOutput(
+            "stderr",
+            chunk
+          );
+        }
       );
     }
 
-    const reproCmd =
-      formatCommand(
-        activePlayer,
-        args
+    proc.on(
+      "error",
+      (e) => {
+        console.error(
+          `[Player] Gagal spawn ${playerName}:`,
+          e.message
+        );
+      }
+    );
+
+    // ───────────────────────────────────────
+    // yt-dlp PIPE
+    // ───────────────────────────────────────
+
+    if (
+      useYtdlpPipe
+    ) {
+      console.log(
+        "[Player] Starting yt-dlp streaming pipe..."
       );
 
-    proc.on("error", (e) => {
-      console.error(
-        `[Player] Gagal spawn ${playerName}:`,
-        e.message
+      await ytdlpManager.waitUntilReady();
+
+      const ytdlpBin =
+        ytdlpManager.getYtdlpBin();
+
+      console.log(
+        `[Player] yt-dlp binary: ${ytdlpBin}`
       );
 
-      console.error(
-        `[Player] Executable: ${activePlayer}`
+      const ytdlpArgs = [
+        "--no-warnings",
+        "--quiet",
+        "--no-progress",
+
+        // Do not use android/android_vr.
+        //
+        // YouTube currently enforces PO tokens on GVS for
+        // several clients. tv_simply currently avoids that
+        // requirement.
+        "--extractor-args",
+        "youtube:player_client=tv_simply",
+
+        // Prefer audio-only formats.
+        "-f",
+        "bestaudio/best",
+
+        // Force raw media stream to stdout.
+        "-o",
+        "-",
+
+        // Do not write files.
+        "--no-part",
+        "--no-continue",
+
+        // Input URL.
+        "--",
+        playbackUrl,
+      ];
+
+      console.log(
+        `[Player] yt-dlp pipe args: ${JSON.stringify(
+          ytdlpArgs
+        )}`
       );
 
-      console.error(
-        `[Player] Args: ${JSON.stringify(args)}`
+      const ytdlpProc =
+        spawn(
+          ytdlpBin,
+          ytdlpArgs,
+          {
+            stdio: [
+              "ignore",
+              "pipe",
+              "pipe",
+            ],
+
+            detached: false,
+          }
+        );
+
+      state.ytdlpProc =
+        ytdlpProc;
+
+      let ytdlpError =
+        "";
+
+      if (
+        ytdlpProc.stderr
+      ) {
+        ytdlpProc.stderr.on(
+          "data",
+          (chunk) => {
+            const text =
+              chunk.toString(
+                "utf8"
+              );
+
+            ytdlpError =
+              (
+                ytdlpError +
+                text
+              ).slice(
+                -8000
+              );
+
+            console.log(
+              `[yt-dlp] ${text.trim()}`
+            );
+          }
+        );
+      }
+
+      ytdlpProc.on(
+        "error",
+        (e) => {
+          console.error(
+            "[yt-dlp] Spawn error:",
+            e.message
+          );
+
+          try {
+            if (
+              proc.stdin &&
+              !proc.stdin.destroyed
+            ) {
+              proc.stdin.end();
+            }
+          } catch (err) {}
+        }
       );
-    });
+
+      // ─────────────────────────────────────
+      // THE IMPORTANT PART:
+      //
+      // yt-dlp stdout -> mpv stdin
+      // ─────────────────────────────────────
+
+      ytdlpProc.stdout.pipe(
+        proc.stdin
+      );
+
+      ytdlpProc.on(
+        "exit",
+        (
+          code,
+          signal
+        ) => {
+          if (
+            state.ytdlpProc ===
+            ytdlpProc
+          ) {
+            state.ytdlpProc =
+              null;
+          }
+
+          if (
+            state.playerKilled
+          ) {
+            return;
+          }
+
+          if (
+            code !== 0 &&
+            !signal
+          ) {
+            console.error(
+              `[yt-dlp] Streaming gagal (code=${code})`
+            );
+
+            if (
+              ytdlpError.trim()
+            ) {
+              console.error(
+                `[yt-dlp] ${ytdlpError.trim()}`
+              );
+            }
+          }
+
+          // IMPORTANT:
+          // Do NOT kill mpv immediately when yt-dlp
+          // exits normally. mpv may have buffered data.
+          //
+          // Closing stdin is enough.
+          try {
+            if (
+              proc.stdin &&
+              !proc.stdin.destroyed
+            ) {
+              proc.stdin.end();
+            }
+          } catch (e) {}
+        }
+      );
+    } else {
+      // Direct URL mode:
+      // mpv does not need stdin.
+      try {
+        if (
+          proc.stdin &&
+          !proc.stdin.destroyed
+        ) {
+          proc.stdin.end();
+        }
+      } catch (e) {}
+    }
+
+    // ───────────────────────────────────────
+    // MPV EXIT
+    // ───────────────────────────────────────
 
     proc.on(
       "exit",
-      (code, signal) => {
-        const elapsed = (
-          Date.now() / 1000 -
-          state.currentSongStartTime
-        ).toFixed(1);
+      (
+        code,
+        signal
+      ) => {
+        const elapsed =
+          (
+            Date.now() /
+              1000 -
+            state.currentSongStartTime
+          ).toFixed(1);
 
-        if (state.playerKilled) {
+        if (
+          state.playerKilled
+        ) {
           return;
+        }
+
+        if (
+          state.mpvProc ===
+          proc
+        ) {
+          state.mpvProc =
+            null;
         }
 
         if (
@@ -809,44 +1285,42 @@ async function playServerAudio(youtubeUrl) {
           Number(elapsed) < 3
         ) {
           console.error(
-            `[Player] ${playerName} berhenti nggak wajar ` +
-            `setelah ${elapsed}s ` +
-            `(exit code=${code}, signal=${signal || "-"}) ` +
-            `[pid=${proc.pid}].`
+            `[Player] ${playerName} playback FAILED after ${elapsed}s ` +
+            `(code=${code}, signal=${
+              signal || "-"
+            }).`
           );
 
-          console.error(
-            `[Player] Executable: ${activePlayer}`
-          );
-
-          console.error(
-            `[Player] Args: ${JSON.stringify(args)}`
-          );
-
-          if (outputTail.trim()) {
+          if (
+            outputTail.trim()
+          ) {
             console.error(
-              `[Player] ${playerName} output:\n` +
-              outputTail.trim()
-            );
-          } else {
-            console.error(
-              `[Player] Tidak ada output dari ${playerName}.`
+              `[Player] mpv output:\n${outputTail.trim()}`
             );
           }
 
-          console.error(
-            `[Player] Reproduce command:\n${reproCmd}`
-          );
+          if (
+            useYtdlpPipe
+          ) {
+            console.error(
+              `[Player] Playback used yt-dlp PIPE mode.`
+            );
+          }
         } else {
           console.log(
-            `[Player] ${playerName} selesai memutar ` +
-            `setelah ${elapsed}s (code=${code}).`
+            `[Player] ${playerName} selesai memutar setelah ${elapsed}s.`
           );
         }
       }
     );
 
-    if (state.currentSong) {
+    // ───────────────────────────────────────
+    // SUBTITLE
+    // ───────────────────────────────────────
+
+    if (
+      state.currentSong
+    ) {
       try {
         require("./subtitles")
           .startSubtitleBroadcaster(
@@ -855,14 +1329,15 @@ async function playServerAudio(youtubeUrl) {
             subMap
           );
       } catch (e) {
-        // Subtitles are best-effort.
+        // Subtitle is best-effort.
       }
     }
 
     return true;
+
   } catch (e) {
     console.error(
-      "[Player] Error starting player:",
+      "[Player] Error starting playback:",
       e.message
     );
 
