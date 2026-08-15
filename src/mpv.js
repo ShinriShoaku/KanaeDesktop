@@ -31,7 +31,28 @@ function findLocalPlayer(name) {
   return null;
 }
 
+/**
+ * Resolution order:
+ *   1. A bundled mpv downloaded by mpvManager.js (src/bin/mpv[.exe]) -
+ *      checked fresh every call so a background first-run download
+ *      becomes active on the very next song without an app restart.
+ *      Preferred over system mpv because it's launched with --no-config
+ *      (see playServerAudio), fully isolated from whatever's in the
+ *      user's own ~/.config/mpv/ - which is otherwise a very common,
+ *      very hard-to-diagnose source of mpv exiting near-instantly with
+ *      zero log output (a misbehaving script/config option, not an
+ *      actual playback failure).
+ *   2. The old BASE_DIR-relative locations, for anyone who already
+ *      drops their own mpv binary next to the app manually.
+ *   3. Whatever "mpv" resolves to on PATH.
+ */
 function detectPlayer() {
+  try {
+    const bundled = require("./mpvManager").getMpvBin();
+    if (bundled) return bundled;
+  } catch (e) {
+    /* mpvManager is best-effort - fall through to the old detection */
+  }
   const local = findLocalPlayer("mpv");
   if (local) return local;
   // Try system PATH
@@ -190,9 +211,12 @@ async function playServerAudio(youtubeUrl) {
   state.playerKilled = false;
   state.isPaused = false;
 
-  if (!state.serverPlayer) {
-    state.serverPlayer = detectPlayer();
-  }
+  // Re-detect on every call rather than only when unset: this is what lets
+  // a bundled mpv that finishes downloading in the background (see
+  // mpvManager.js) take over on the very next song, without needing an
+  // app restart. detectPlayer() is cheap (just fs.existsSync checks plus
+  // one `which`/`where` call as a last resort).
+  state.serverPlayer = detectPlayer();
   const player = state.serverPlayer;
   if (!player) {
     console.error("[Player] No local mpv found. Place mpv in the app folder or install it system-wide.");
@@ -227,6 +251,15 @@ async function playServerAudio(youtubeUrl) {
         } catch (e) {}
       }
       args = [
+        "--no-config",
+        // Prevents mpv from loading ~/.config/mpv/mpv.conf and any
+        // scripts in ~/.config/mpv/scripts/ (e.g. the stock ytdl_hook.lua
+        // trying to re-resolve a URL we've already resolved, or any
+        // other user customization). A misbehaving config/script is a
+        // very plausible explanation for mpv exiting almost instantly
+        // with a non-zero code and *zero* output on either stdout or
+        // stderr - a real internal playback error (bad stream, missing
+        // codec, etc.) virtually always prints something first.
         "--no-video",
         "--no-terminal",
         // NOT --really-quiet: that suppresses mpv's error output entirely,
@@ -245,22 +278,36 @@ async function playServerAudio(youtubeUrl) {
       args = ["-nodisp", "-autoexit", "-loglevel", "quiet", "-volume", String(musicVol), streamUrl];
     }
 
-    const proc = spawn(player, args, { stdio: ["ignore", "ignore", "pipe"], detached: false });
+    const proc = spawn(player, args, { stdio: ["ignore", "pipe", "pipe"], detached: false });
     state.mpvProc = proc;
     state.currentSongStartTime = Date.now() / 1000;
 
-    // stderr was previously fully discarded (stdio:"ignore"), so whenever
-    // mpv failed to actually play something (expired/rate-limited stream
-    // URL, network error, etc.) there was zero visibility into why - the
-    // song just silently died. Now we keep the last chunk of its stderr
-    // and print it if the process exits abnormally.
+    // Both stdout AND stderr were previously discarded/half-discarded, so
+    // whenever mpv failed to actually play something (expired/rate-limited
+    // stream URL, network error, bad option, etc.) there was zero
+    // visibility into why - the song just silently died.
+    //
+    // IMPORTANT: unlike most CLI tools, mpv writes its actual log/error
+    // messages to STDOUT, not stderr (stderr is mostly used for its
+    // interactive status line). Piping only stderr - as this used to do -
+    // meant the real failure reason was thrown away every time, and only
+    // the unhelpful "no error output - probably killed externally" guess
+    // ever got logged. Capture both and print whichever has content.
     const playerName = path.basename(player);
-    let stderrTail = "";
-    if (proc.stderr) {
-      proc.stderr.on("data", (chunk) => {
-        stderrTail = (stderrTail + chunk.toString("utf-8")).slice(-4000);
-      });
-    }
+    let outputTail = "";
+    const captureOutput = (chunk) => {
+      outputTail = (outputTail + chunk.toString("utf-8")).slice(-4000);
+    };
+    if (proc.stdout) proc.stdout.on("data", captureOutput);
+    if (proc.stderr) proc.stderr.on("data", captureOutput);
+
+    // If mpv still exits with ZERO output on both streams, that's no longer
+    // something we can diagnose from inside Node - it means mpv never got a
+    // chance to log anything at all (killed by something external: AV/
+    // Defender, sandboxing, an audio-driver crash, OOM, etc). Log the exact
+    // command so it can be re-run by hand, directly in a terminal, to see
+    // mpv's real behavior with zero Node involvement.
+    const reproCmd = `${player} ${args.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ")}`;
 
     proc.on("error", (e) => console.error(`[Player] Gagal spawn ${playerName}:`, e.message));
 
@@ -272,10 +319,11 @@ async function playServerAudio(youtubeUrl) {
       }
       if (code !== 0 || signal || Number(elapsed) < 3) {
         console.error(
-          `[Player] ${playerName} berhenti nggak wajar setelah ${elapsed}s (exit code=${code}, signal=${signal || "-"}).` +
-            (stderrTail.trim()
-              ? ` ${playerName} stderr:\n${stderrTail.trim()}`
-              : ` (tidak ada output error dari ${playerName} - kemungkinan proses ke-kill paksa dari luar)`)
+          `[Player] ${playerName} berhenti nggak wajar setelah ${elapsed}s (exit code=${code}, signal=${signal || "-"}) [pid=${proc.pid}].` +
+            (outputTail.trim()
+              ? ` ${playerName} output:\n${outputTail.trim()}`
+              : ` (tidak ada output sama sekali dari ${playerName} - kemungkinan proses ke-kill paksa dari luar, misal antivirus/OOM/driver audio crash.` +
+                ` Coba jalankan manual buat lihat penyebab aslinya:\n${reproCmd})`)
         );
       } else {
         console.log(`[Player] ${playerName} selesai memutar setelah ${elapsed}s (code=${code}).`);

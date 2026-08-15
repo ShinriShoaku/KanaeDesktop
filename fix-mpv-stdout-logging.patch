@@ -1,0 +1,69 @@
+diff --git a/src/mpv.js b/src/mpv.js
+index fcc6d2f..86440cf 100644
+--- a/src/mpv.js
++++ b/src/mpv.js
+@@ -245,22 +245,36 @@ async function playServerAudio(youtubeUrl) {
+       args = ["-nodisp", "-autoexit", "-loglevel", "quiet", "-volume", String(musicVol), streamUrl];
+     }
+ 
+-    const proc = spawn(player, args, { stdio: ["ignore", "ignore", "pipe"], detached: false });
++    const proc = spawn(player, args, { stdio: ["ignore", "pipe", "pipe"], detached: false });
+     state.mpvProc = proc;
+     state.currentSongStartTime = Date.now() / 1000;
+ 
+-    // stderr was previously fully discarded (stdio:"ignore"), so whenever
+-    // mpv failed to actually play something (expired/rate-limited stream
+-    // URL, network error, etc.) there was zero visibility into why - the
+-    // song just silently died. Now we keep the last chunk of its stderr
+-    // and print it if the process exits abnormally.
++    // Both stdout AND stderr were previously discarded/half-discarded, so
++    // whenever mpv failed to actually play something (expired/rate-limited
++    // stream URL, network error, bad option, etc.) there was zero
++    // visibility into why - the song just silently died.
++    //
++    // IMPORTANT: unlike most CLI tools, mpv writes its actual log/error
++    // messages to STDOUT, not stderr (stderr is mostly used for its
++    // interactive status line). Piping only stderr - as this used to do -
++    // meant the real failure reason was thrown away every time, and only
++    // the unhelpful "no error output - probably killed externally" guess
++    // ever got logged. Capture both and print whichever has content.
+     const playerName = path.basename(player);
+-    let stderrTail = "";
+-    if (proc.stderr) {
+-      proc.stderr.on("data", (chunk) => {
+-        stderrTail = (stderrTail + chunk.toString("utf-8")).slice(-4000);
+-      });
+-    }
++    let outputTail = "";
++    const captureOutput = (chunk) => {
++      outputTail = (outputTail + chunk.toString("utf-8")).slice(-4000);
++    };
++    if (proc.stdout) proc.stdout.on("data", captureOutput);
++    if (proc.stderr) proc.stderr.on("data", captureOutput);
++
++    // If mpv still exits with ZERO output on both streams, that's no longer
++    // something we can diagnose from inside Node - it means mpv never got a
++    // chance to log anything at all (killed by something external: AV/
++    // Defender, sandboxing, an audio-driver crash, OOM, etc). Log the exact
++    // command so it can be re-run by hand, directly in a terminal, to see
++    // mpv's real behavior with zero Node involvement.
++    const reproCmd = `${player} ${args.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ")}`;
+ 
+     proc.on("error", (e) => console.error(`[Player] Gagal spawn ${playerName}:`, e.message));
+ 
+@@ -272,10 +286,11 @@ async function playServerAudio(youtubeUrl) {
+       }
+       if (code !== 0 || signal || Number(elapsed) < 3) {
+         console.error(
+-          `[Player] ${playerName} berhenti nggak wajar setelah ${elapsed}s (exit code=${code}, signal=${signal || "-"}).` +
+-            (stderrTail.trim()
+-              ? ` ${playerName} stderr:\n${stderrTail.trim()}`
+-              : ` (tidak ada output error dari ${playerName} - kemungkinan proses ke-kill paksa dari luar)`)
++          `[Player] ${playerName} berhenti nggak wajar setelah ${elapsed}s (exit code=${code}, signal=${signal || "-"}) [pid=${proc.pid}].` +
++            (outputTail.trim()
++              ? ` ${playerName} output:\n${outputTail.trim()}`
++              : ` (tidak ada output sama sekali dari ${playerName} - kemungkinan proses ke-kill paksa dari luar, misal antivirus/OOM/driver audio crash.` +
++                ` Coba jalankan manual buat lihat penyebab aslinya:\n${reproCmd})`)
+         );
+       } else {
+         console.log(`[Player] ${playerName} selesai memutar setelah ${elapsed}s (code=${code}).`);

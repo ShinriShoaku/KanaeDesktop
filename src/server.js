@@ -9,6 +9,7 @@ const mpv = require("./mpv");
 const tiktok = require("./tiktok");
 const versionMod = require("./version");
 const ytdlpManager = require("./ytdlpManager");
+const mpvManager = require("./mpvManager");
 const sse = require("./sse");
 const playerService = require("./playerService");
 const { state, flushQueueSync } = require("./state");
@@ -99,6 +100,14 @@ async function main() {
   // (src/youtube.js) awaits ytdlpManager.waitUntilReady() itself.
   ytdlpManager.onStatus((status, data) => sse.broadcast("ytdlp_status", { status, ...data }));
   ytdlpManager.startEnsureYtdlp();
+
+  // Same non-blocking "download/update in the background" pattern as
+  // yt-dlp above, for the bundled mpv (see mpvManager.js). detectPlayer()
+  // already re-checks for this on every playServerAudio() call, so once
+  // this finishes the very next song automatically switches to the
+  // bundled, --no-config mpv instead of whatever's on the system.
+  mpvManager.onStatus((status, data) => sse.broadcast("mpv_status", { status, ...data }));
+  mpvManager.startEnsureMpv();
 }
 
 process.on("SIGINT", async () => {
