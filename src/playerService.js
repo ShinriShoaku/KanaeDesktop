@@ -89,7 +89,7 @@ async function playCurrentOrAdvance({ maxAttempts = 5 } = {}) {
     }
 
     const song = state.currentSong;
-    const started = await mpv.playServerAudio(song.youtube_url);
+    const started = await mpv.playServerAudio(song.youtube_url, song);
     if (started) {
       broadcastPlayerState();
       return;

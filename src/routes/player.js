@@ -41,7 +41,7 @@ router.post("/player/play", async (req, res) => {
   state.currentSong = song;
   state.isPlaying = true;
   state.isPaused = false;
-  const serverPlaying = await mpv.playServerAudio(youtubeUrl);
+  const serverPlaying = await mpv.playServerAudio(youtubeUrl, song);
   playerService.broadcastPlayerState();
   res.json({ message: "Playing now", song, server_audio: serverPlaying });
 });
@@ -80,7 +80,7 @@ router.post("/player/song-ended", async (req, res) => {
   }
   let serverPlaying = false;
   if (state.currentSong) {
-    serverPlaying = await mpv.playServerAudio(state.currentSong.youtube_url);
+    serverPlaying = await mpv.playServerAudio(state.currentSong.youtube_url, state.currentSong);
   }
   playerService.broadcastPlayerState();
   res.json({

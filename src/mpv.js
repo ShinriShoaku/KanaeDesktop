@@ -774,9 +774,46 @@ async function resumeServerAudio() {
 // PLAY SERVER AUDIO
 // ─────────────────────────────────────────────────────────────
 
+// Serializes playServerAudio() calls so two overlapping requests (e.g. two
+// #skip commands arriving from TikTok chat within the same second) can never
+// both be mid-resolve/mid-spawn at once. Without this, both calls would race
+// past killServerPlayer() before either had spawned anything, each spawn its
+// own mpv process, and then stomp on each other's state.mpvProc /
+// state.currentSong / state.currentSongStartTime - which is what caused
+// orphaned/duplicate audio processes and lyrics that belonged to a
+// different song than whatever was actually audible.
+let _playbackLock = Promise.resolve();
+
 async function playServerAudio(
-  youtubeUrl
+  youtubeUrl,
+  song = null
 ) {
+  const myToken = ++state.playbackToken;
+
+  const run = _playbackLock.then(() =>
+    _playServerAudioLocked(youtubeUrl, song, myToken)
+  );
+
+  // Keep the chain alive even if this attempt throws/returns false, so the
+  // next queued call still gets its turn.
+  _playbackLock = run.catch(() => {});
+
+  return run;
+}
+
+async function _playServerAudioLocked(
+  youtubeUrl,
+  song,
+  myToken
+) {
+  // A newer playServerAudio() call was made while this one was waiting for
+  // its turn - it already knows more recent queue state (e.g. a later
+  // #skip), so bail out instead of briefly playing/showing lyrics for a
+  // song that's already been skipped past.
+  if (state.playbackToken !== myToken) {
+    return false;
+  }
+
   await killServerPlayer();
 
   state.playerKilled = false;
@@ -1326,13 +1363,28 @@ async function playServerAudio(
     // SUBTITLE
     // ───────────────────────────────────────
 
+    // Use the `song` this specific call resolved subMap for - NOT
+    // state.currentSong. By this point state.currentSong may already have
+    // been moved on to a *different* song (e.g. a #skip that landed while
+    // this resolve was still in flight), even though this call is the one
+    // that ended up actually spawning mpv. Broadcasting subtitles for
+    // state.currentSong in that case would show lyrics for a song other
+    // than the one actually playing.
+    const subtitleSong = song || state.currentSong;
+
+    // Also double-check we weren't superseded while resolving/spawning
+    // above (killServerPlayer + resolvers.resolvePlaybackWithFallback can
+    // both take a while). If a newer call already grabbed the lock behind
+    // us, our own audio is about to get killed anyway - don't bother
+    // starting a subtitle broadcast for it.
     if (
-      state.currentSong
+      subtitleSong &&
+      state.playbackToken === myToken
     ) {
       try {
         require("./subtitles")
           .startSubtitleBroadcaster(
-            state.currentSong,
+            subtitleSong,
             state.currentSongStartTime,
             subMap
           );

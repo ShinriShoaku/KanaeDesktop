@@ -118,6 +118,13 @@ const state = {
   // subtitle broadcaster guard
   subtitleSongId: null,
 
+  // playback request generation counter. Bumped on every playServerAudio()
+  // call so overlapping calls (e.g. several #skip commands arriving from
+  // TikTok chat back-to-back) can tell whether they've been superseded by a
+  // newer request before they commit to spawning mpv / broadcasting
+  // subtitles - see mpv.js playServerAudio().
+  playbackToken: 0,
+
   // volume (loaded/persisted via config.js in server bootstrap)
   musicVolume: 100,
   ttsVolumePct: 0,
