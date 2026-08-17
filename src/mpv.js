@@ -1032,8 +1032,74 @@ async function _playServerAudioLocked(
     state.mpvProc =
       proc;
 
-    state.currentSongStartTime =
-      Date.now() / 1000;
+    // ───────────────────────────────────────
+    // AUDIO TIMING / SUBTITLE START
+    // ───────────────────────────────────────
+    //
+    // IMPORTANT: this used to be set unconditionally right here, i.e. at
+    // mpv *spawn* time. That's correct for direct-URL playback (mpv starts
+    // fetching/decoding the resolved stream URL itself almost immediately),
+    // but it's WRONG for yt-dlp pipe mode (the default resolver - see the
+    // note at the top of resolvers.js): in pipe mode, spawning mpv doesn't
+    // mean audio is imminent, because mpv is just sitting there waiting on
+    // stdin. The actual yt-dlp child process still has to be spawned,
+    // resolve the URL again, start extracting, and only THEN does it begin
+    // writing bytes to mpv's stdin. That extraction step alone can easily
+    // take 1-5+ seconds (more with cookies/JS-runtime overhead), and it was
+    // being counted as if the song had already started playing - so every
+    // subtitle timestamp was computed against a start time that was too
+    // early, and lyrics would fire ahead of the actual audio and drift
+    // further out of sync the longer the song played.
+    //
+    // Fix: for pipe mode, don't lock in currentSongStartTime / start the
+    // subtitle broadcaster until yt-dlp's stdout actually emits its first
+    // chunk of audio data (i.e. audio is actually about to reach mpv).
+    // Direct mode keeps the old (correct) behavior of timing from spawn.
+
+    let _audioTimingLocked = false;
+
+    // Use the `song` this specific call resolved subMap for - NOT
+    // state.currentSong. By this point state.currentSong may already have
+    // been moved on to a *different* song (e.g. a #skip that landed while
+    // this resolve was still in flight), even though this call is the one
+    // that ended up actually spawning mpv. Broadcasting subtitles for
+    // state.currentSong in that case would show lyrics for a song other
+    // than the one actually playing.
+    const subtitleSong = song || state.currentSong;
+
+    function beginSubtitles() {
+      // Also double-check we weren't superseded while resolving/spawning
+      // above (killServerPlayer + resolvers.resolvePlaybackWithFallback can
+      // both take a while, and pipe mode additionally waits for yt-dlp's
+      // first data chunk). If a newer call already grabbed the lock behind
+      // us, our own audio is about to get killed anyway - don't bother
+      // starting a subtitle broadcast for it.
+      if (
+        subtitleSong &&
+        state.playbackToken === myToken
+      ) {
+        try {
+          require("./subtitles")
+            .startSubtitleBroadcaster(
+              subtitleSong,
+              state.currentSongStartTime,
+              subMap
+            );
+        } catch (e) {
+          // Subtitle is best-effort.
+        }
+      }
+    }
+
+    const startAudioTiming = () => {
+      if (_audioTimingLocked) return;
+      _audioTimingLocked = true;
+
+      state.currentSongStartTime =
+        Date.now() / 1000;
+
+      beginSubtitles();
+    };
 
     const playerName =
       path.basename(
@@ -1217,6 +1283,16 @@ async function _playServerAudioLocked(
       // yt-dlp stdout -> mpv stdin
       // ─────────────────────────────────────
 
+      // Real audio start signal for pipe mode: the moment yt-dlp actually
+      // starts writing bytes to mpv's stdin, NOT when the processes were
+      // merely spawned.
+      ytdlpProc.stdout.once(
+        "data",
+        () => {
+          startAudioTiming();
+        }
+      );
+
       ytdlpProc.stdout.pipe(
         proc.stdin
       );
@@ -1275,6 +1351,10 @@ async function _playServerAudioLocked(
       );
     } else {
       // Direct URL mode:
+      // mpv fetches/decodes the resolved URL itself right after spawn, so
+      // spawn-time is still an accurate proxy for audio start.
+      startAudioTiming();
+
       // mpv does not need stdin.
       try {
         if (
@@ -1362,36 +1442,10 @@ async function _playServerAudioLocked(
     // ───────────────────────────────────────
     // SUBTITLE
     // ───────────────────────────────────────
-
-    // Use the `song` this specific call resolved subMap for - NOT
-    // state.currentSong. By this point state.currentSong may already have
-    // been moved on to a *different* song (e.g. a #skip that landed while
-    // this resolve was still in flight), even though this call is the one
-    // that ended up actually spawning mpv. Broadcasting subtitles for
-    // state.currentSong in that case would show lyrics for a song other
-    // than the one actually playing.
-    const subtitleSong = song || state.currentSong;
-
-    // Also double-check we weren't superseded while resolving/spawning
-    // above (killServerPlayer + resolvers.resolvePlaybackWithFallback can
-    // both take a while). If a newer call already grabbed the lock behind
-    // us, our own audio is about to get killed anyway - don't bother
-    // starting a subtitle broadcast for it.
-    if (
-      subtitleSong &&
-      state.playbackToken === myToken
-    ) {
-      try {
-        require("./subtitles")
-          .startSubtitleBroadcaster(
-            subtitleSong,
-            state.currentSongStartTime,
-            subMap
-          );
-      } catch (e) {
-        // Subtitle is best-effort.
-      }
-    }
+    //
+    // (started via startAudioTiming() -> beginSubtitles(), defined above,
+    // triggered either right after spawn for direct mode, or on yt-dlp's
+    // first stdout chunk for pipe mode - see the AUDIO TIMING section.)
 
     return true;
 

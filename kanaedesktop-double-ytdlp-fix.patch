@@ -1,0 +1,62 @@
+diff --git a/src/youtube.js b/src/youtube.js
+index 718f2c7..e3d4f1a 100644
+--- a/src/youtube.js
++++ b/src/youtube.js
+@@ -281,36 +281,29 @@ function extractBestAudioUrl(info) {
+ }
+ 
+ /**
+- * Resolves everything needed to actually START playback in ONE yt-dlp
+- * invocation: the direct audio stream URL AND the subtitle map together,
+- * instead of two separate full info-extractions (which is what happened
+- * before - getAudioStreamUrl() and the subtitle broadcaster's own
+- * fetchSubtitleMap() call each did their own `-J` request for the same
+- * video back-to-back). Halving the yt-dlp calls on the playback hot path
+- * both makes "grab the link so it can play" noticeably faster, and matters
+- * a lot for avoiding YouTube rate limits (HTTP 429) - fewer requests per
+- * song means fewer chances to get throttled, and a throttled subtitle
+- * fetch can no longer take down the actual audio stream resolution since
+- * they're now the same request instead of a second one riding right behind it.
+- * Used by mpv.js's playServerAudio(). getAudioStreamUrl()/fetchSubtitleMap()
+- * are kept as-is for the manual web UI endpoints (routes/youtube.js).
++ * Resolves everything needed to actually START playback: the direct audio
++ * stream URL AND the subtitle map together, reusing the SAME cached
++ * getInfo() lookup that already ran when the song was searched/added to
++ * the queue (findPlayableInfo() / routes that call youtube.getInfo()).
++ *
++ * This used to run its own separate, uncached `-J` extraction here on top
++ * of that earlier getInfo() call - i.e. two full yt-dlp metadata
++ * extractions back-to-back for the exact same URL (one to validate/queue
++ * the song, one here to actually resolve playback), often taking 5-10s
++ * EACH. yt-dlp's normal `-J` info dict already contains `subtitles` /
++ * `automatic_captions` (available formats + signed URLs) regardless of
++ * --write-subs/--sub-langs - those flags only control downloading files to
++ * disk, not whether the metadata is present - so the extra flags and the
++ * extra request were pure duplication.
++ *
++ * Routing through getInfo()'s cache means: if the song was queued/searched
++ * within the last 10 minutes (the common case), this resolves instantly
++ * from cache instead of re-running yt-dlp. The only yt-dlp process that
++ * still has to run fresh every time is the actual streaming pipe spawned
++ * by mpv.js, since that's the one fetching real audio bytes, not metadata.
+  */
+ async function resolvePlayback(url) {
+-  const stdout = await run([
+-    "--quiet",
+-    "--no-warnings",
+-    "-f",
+-    "bestaudio[ext=m4a]/bestaudio/best",
+-    "--write-subs",
+-    "--write-auto-subs",
+-    "--sub-format",
+-    "json3",
+-    "--sub-langs",
+-    "all",
+-    "-J",
+-    url,
+-  ]);
+-  const info = JSON.parse(stdout);
++  const info = await getInfo(url);
+   return {
+     streamUrl: extractBestAudioUrl(info) || url,
+     subMap: extractSubMap(info),

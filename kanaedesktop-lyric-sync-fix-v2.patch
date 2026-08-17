@@ -1,56 +1,8 @@
 diff --git a/src/mpv.js b/src/mpv.js
-index 823c3c7..5dec022 100644
+index e15aa8b..5dec022 100644
 --- a/src/mpv.js
 +++ b/src/mpv.js
-@@ -774,9 +774,46 @@ async function resumeServerAudio() {
- // PLAY SERVER AUDIO
- // ─────────────────────────────────────────────────────────────
- 
-+// Serializes playServerAudio() calls so two overlapping requests (e.g. two
-+// #skip commands arriving from TikTok chat within the same second) can never
-+// both be mid-resolve/mid-spawn at once. Without this, both calls would race
-+// past killServerPlayer() before either had spawned anything, each spawn its
-+// own mpv process, and then stomp on each other's state.mpvProc /
-+// state.currentSong / state.currentSongStartTime - which is what caused
-+// orphaned/duplicate audio processes and lyrics that belonged to a
-+// different song than whatever was actually audible.
-+let _playbackLock = Promise.resolve();
-+
- async function playServerAudio(
--  youtubeUrl
-+  youtubeUrl,
-+  song = null
-+) {
-+  const myToken = ++state.playbackToken;
-+
-+  const run = _playbackLock.then(() =>
-+    _playServerAudioLocked(youtubeUrl, song, myToken)
-+  );
-+
-+  // Keep the chain alive even if this attempt throws/returns false, so the
-+  // next queued call still gets its turn.
-+  _playbackLock = run.catch(() => {});
-+
-+  return run;
-+}
-+
-+async function _playServerAudioLocked(
-+  youtubeUrl,
-+  song,
-+  myToken
- ) {
-+  // A newer playServerAudio() call was made while this one was waiting for
-+  // its turn - it already knows more recent queue state (e.g. a later
-+  // #skip), so bail out instead of briefly playing/showing lyrics for a
-+  // song that's already been skipped past.
-+  if (state.playbackToken !== myToken) {
-+    return false;
-+  }
-+
-   await killServerPlayer();
- 
-   state.playerKilled = false;
-@@ -995,8 +1032,74 @@ async function playServerAudio(
+@@ -1032,8 +1032,74 @@ async function _playServerAudioLocked(
      state.mpvProc =
        proc;
  
@@ -127,7 +79,7 @@ index 823c3c7..5dec022 100644
  
      const playerName =
        path.basename(
-@@ -1180,6 +1283,16 @@ async function playServerAudio(
+@@ -1217,6 +1283,16 @@ async function _playServerAudioLocked(
        // yt-dlp stdout -> mpv stdin
        // ─────────────────────────────────────
  
@@ -144,7 +96,7 @@ index 823c3c7..5dec022 100644
        ytdlpProc.stdout.pipe(
          proc.stdin
        );
-@@ -1238,6 +1351,10 @@ async function playServerAudio(
+@@ -1275,6 +1351,10 @@ async function _playServerAudioLocked(
        );
      } else {
        // Direct URL mode:
@@ -155,18 +107,33 @@ index 823c3c7..5dec022 100644
        // mpv does not need stdin.
        try {
          if (
-@@ -1325,21 +1442,10 @@ async function playServerAudio(
+@@ -1362,36 +1442,10 @@ async function _playServerAudioLocked(
      // ───────────────────────────────────────
      // SUBTITLE
      // ───────────────────────────────────────
 -
+-    // Use the `song` this specific call resolved subMap for - NOT
+-    // state.currentSong. By this point state.currentSong may already have
+-    // been moved on to a *different* song (e.g. a #skip that landed while
+-    // this resolve was still in flight), even though this call is the one
+-    // that ended up actually spawning mpv. Broadcasting subtitles for
+-    // state.currentSong in that case would show lyrics for a song other
+-    // than the one actually playing.
+-    const subtitleSong = song || state.currentSong;
+-
+-    // Also double-check we weren't superseded while resolving/spawning
+-    // above (killServerPlayer + resolvers.resolvePlaybackWithFallback can
+-    // both take a while). If a newer call already grabbed the lock behind
+-    // us, our own audio is about to get killed anyway - don't bother
+-    // starting a subtitle broadcast for it.
 -    if (
--      state.currentSong
+-      subtitleSong &&
+-      state.playbackToken === myToken
 -    ) {
 -      try {
 -        require("./subtitles")
 -          .startSubtitleBroadcaster(
--            state.currentSong,
+-            subtitleSong,
 -            state.currentSongStartTime,
 -            subMap
 -          );
@@ -181,56 +148,3 @@ index 823c3c7..5dec022 100644
  
      return true;
  
-diff --git a/src/playerService.js b/src/playerService.js
-index 5489cd6..8a53b19 100644
---- a/src/playerService.js
-+++ b/src/playerService.js
-@@ -89,7 +89,7 @@ async function playCurrentOrAdvance({ maxAttempts = 5 } = {}) {
-     }
- 
-     const song = state.currentSong;
--    const started = await mpv.playServerAudio(song.youtube_url);
-+    const started = await mpv.playServerAudio(song.youtube_url, song);
-     if (started) {
-       broadcastPlayerState();
-       return;
-diff --git a/src/routes/player.js b/src/routes/player.js
-index 1068456..480fb1a 100644
---- a/src/routes/player.js
-+++ b/src/routes/player.js
-@@ -41,7 +41,7 @@ router.post("/player/play", async (req, res) => {
-   state.currentSong = song;
-   state.isPlaying = true;
-   state.isPaused = false;
--  const serverPlaying = await mpv.playServerAudio(youtubeUrl);
-+  const serverPlaying = await mpv.playServerAudio(youtubeUrl, song);
-   playerService.broadcastPlayerState();
-   res.json({ message: "Playing now", song, server_audio: serverPlaying });
- });
-@@ -80,7 +80,7 @@ router.post("/player/song-ended", async (req, res) => {
-   }
-   let serverPlaying = false;
-   if (state.currentSong) {
--    serverPlaying = await mpv.playServerAudio(state.currentSong.youtube_url);
-+    serverPlaying = await mpv.playServerAudio(state.currentSong.youtube_url, state.currentSong);
-   }
-   playerService.broadcastPlayerState();
-   res.json({
-diff --git a/src/state.js b/src/state.js
-index f3f48ab..0591871 100644
---- a/src/state.js
-+++ b/src/state.js
-@@ -118,6 +118,13 @@ const state = {
-   // subtitle broadcaster guard
-   subtitleSongId: null,
- 
-+  // playback request generation counter. Bumped on every playServerAudio()
-+  // call so overlapping calls (e.g. several #skip commands arriving from
-+  // TikTok chat back-to-back) can tell whether they've been superseded by a
-+  // newer request before they commit to spawning mpv / broadcasting
-+  // subtitles - see mpv.js playServerAudio().
-+  playbackToken: 0,
-+
-   // volume (loaded/persisted via config.js in server bootstrap)
-   musicVolume: 100,
-   ttsVolumePct: 0,
